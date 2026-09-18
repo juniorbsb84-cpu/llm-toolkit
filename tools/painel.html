@@ -1,0 +1,811 @@
+<!doctype html><meta charset=utf-8><title>Esquadrao</title>
+<style>
+:root{
+  /* Explicito, nao "light dark": o popup nativo do <select> segue o
+     color-scheme, e no automatico o Chrome desenhava a lista com fundo branco
+     e o texto claro do tema escuro - ilegivel. */
+  color-scheme:light;
+  --bg:#f6f5f3; --painel:rgba(255,255,255,.82); --painel-solido:#fff;
+  --bar:rgba(255,255,255,.86); --elev:#fbfaf8;
+  --fg:#1a1917; --fg2:#5f5952; --fg3:#8b847c;
+  --line:rgba(40,30,60,.10); --line2:rgba(40,30,60,.20);
+  --ac:#5b21b6; --ac-fg:#fff; --ac-fraco:#efe9fb; --ac-txt:#5b21b6;
+  --ac-soft:rgba(124,58,237,.12);
+  /* Roxo como gradiente: usado no titulo, no monograma e no botao. NAO entra
+     em fundo de texto pequeno - la o roxo cheio com branco por cima e o que
+     passa no contraste (ver a nota do tema escuro). */
+  --grad:linear-gradient(135deg,#4c1d95 0%,#7c3aed 45%,#a78bfa 100%);
+  --grad-texto:linear-gradient(92deg,#4c1d95,#7c3aed 45%,#a78bfa);
+  --off:#f1eff4; --ok:#1f6b3e;
+  --sombra:0 1px 2px rgba(20,16,28,.05), 0 12px 32px -18px rgba(40,20,80,.35);
+  --sombra-btn:0 6px 18px -8px rgba(91,33,182,.6), inset 0 1px 0 rgba(255,255,255,.25);
+  --anel:0 0 0 3px rgba(124,58,237,.3);
+  --raio:18px;
+}
+@media(prefers-color-scheme:dark){:root{
+  color-scheme:dark;
+  --bg:#110f16; --painel:rgba(25,23,34,.78); --painel-solido:#191722;
+  --bar:rgba(17,15,22,.88); --elev:#1f1c2a;
+  --fg:#efecf5; --fg2:#a49eb4; --fg3:#7a7389;
+  --line:rgba(180,165,230,.13); --line2:rgba(180,165,230,.26);
+  /* Roxo cheio com texto branco: o lilas claro (#a78bfa) e legivel, mas some
+     como cor - no escuro ele le como cinza-lavanda, nao como roxo. O branco
+     em cima do 7c3aed passa folgado no contraste de leitura. */
+  --ac:#7c3aed; --ac-fg:#fff; --ac-fraco:#231b38; --ac-txt:#b9a2fb;
+  --ac-soft:rgba(124,58,237,.18);
+  --grad:linear-gradient(135deg,#6d28d9 0%,#a78bfa 50%,#ddd6fe 100%);
+  --grad-texto:linear-gradient(92deg,#8b5cf6,#c4b5fd 45%,#f5f3ff);
+  --off:#151321; --ok:#57b37c;
+  --sombra:0 1px 2px rgba(0,0,0,.45), 0 20px 46px -22px rgba(124,58,237,.35);
+  --sombra-btn:0 6px 20px -8px rgba(124,58,237,.75), inset 0 1px 0 rgba(255,255,255,.2);
+  --anel:0 0 0 3px rgba(167,139,250,.35);
+  --raio:18px;
+}}
+/* Fundo em canvas: constelacao lenta em roxo. Fica atras de tudo e nao recebe
+   clique. Desenhado em devicePixelRatio para nao sair borrado em tela HiDPI -
+   canvas sem isso renderiza na resolucao CSS e escala, e ai as linhas finas
+   viram borrao cinza. z-index 0 (nao negativo): o body agora tem gradientes
+   proprios, e o negativo punha a constelacao atras deles. */
+#fundo{position:fixed;inset:0;z-index:0;pointer-events:none;display:block}
+*{box-sizing:border-box}
+body{color:var(--fg);margin:0;padding:34px 24px 28px;
+  background:
+    radial-gradient(900px 480px at 8% -10%, var(--ac-soft), transparent 60%),
+    radial-gradient(820px 520px at 95% -12%, rgba(167,139,250,.14), transparent 60%),
+    radial-gradient(900px 700px at 50% 118%, var(--ac-soft), transparent 60%),
+    var(--bg);
+  background-attachment:fixed;
+  font:14px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  -webkit-font-smoothing:antialiased}
+.wrap{max-width:900px;margin:0 auto;position:relative;z-index:1}
+
+/* --- cabecalho ----------------------------------------------------------- */
+header{padding:0 4px 22px}
+.eyebrow{display:inline-flex;align-items:center;gap:9px;font-size:11px;font-weight:800;
+  letter-spacing:.18em;text-transform:uppercase;color:var(--ac-txt);
+  background:var(--ac-soft);border:1px solid var(--line);
+  border-radius:999px;padding:6px 14px;margin-bottom:14px}
+.eyebrow::before{content:"";width:8px;height:8px;border-radius:50%;
+  background:var(--grad);box-shadow:0 0 12px var(--ac)}
+h1{font-size:34px;font-weight:800;letter-spacing:-.03em;line-height:1.1;margin:0 0 10px;
+  background:var(--grad-texto);-webkit-background-clip:text;background-clip:text;
+  color:transparent;width:fit-content}
+header p{margin:0;color:var(--fg2);font-size:13.5px;max-width:64ch}
+kbd{font:12px ui-monospace,"Cascadia Code",monospace;background:var(--off);
+  border:1px solid var(--line);border-radius:6px;padding:2px 7px;color:var(--fg2);
+  white-space:nowrap}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
+.chip{font-size:11.5px;font-weight:600;color:var(--fg2);background:var(--painel);
+  border:1px solid var(--line);border-radius:999px;padding:5px 13px;
+  box-shadow:var(--sombra);
+  -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
+  display:inline-flex;align-items:center;gap:6px}
+.chip b{color:var(--ac-txt);font-weight:800;font-variant-numeric:tabular-nums}
+.chip.forte{background:var(--ac-fraco);border-color:var(--line2);color:var(--fg)}
+
+/* --- cards --------------------------------------------------------------- */
+/* Deixou de ser tabela: cada provedor e um cartao proprio. Numa lista de 15
+   slots a borda continua da tabela virava parede - o respiro entre cartoes e
+   o que deixa achar a linha certa sem contar de cima. */
+.grade{display:flex;flex-direction:column;gap:8px;background:transparent;border:0}
+.cab{display:none}
+.p{display:grid;grid-template-columns:38px minmax(150px,auto) minmax(0,1fr) 228px;
+  align-items:center;gap:14px;padding:12px 18px;
+  background:var(--painel);border:1px solid var(--line);border-radius:var(--raio);
+  box-shadow:var(--sombra);
+  -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
+  transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease,opacity .16s ease;
+  animation:subir .45s cubic-bezier(.2,.7,.3,1) backwards}
+#lista>.p:nth-child(1){animation-delay:.02s}#lista>.p:nth-child(2){animation-delay:.05s}
+#lista>.p:nth-child(3){animation-delay:.08s}#lista>.p:nth-child(4){animation-delay:.11s}
+#lista>.p:nth-child(5){animation-delay:.14s}#lista>.p:nth-child(6){animation-delay:.17s}
+#lista>.p:nth-child(7){animation-delay:.2s}#lista>.p:nth-child(8){animation-delay:.23s}
+#lista>.p:nth-child(n+9){animation-delay:.26s}
+@keyframes subir{from{opacity:0;transform:translateY(14px) scale(.99)}to{opacity:1;transform:none}}
+.p:hover{transform:translateY(-2px)}
+/* No lote = filete roxo na borda de dentro. E a unica marca que se le de
+   relance numa coluna de 15, sem ter de olhar o interruptor de cada um. */
+.p:not(.off){border-color:var(--line2);box-shadow:var(--sombra),inset 3px 0 0 var(--ac)}
+/* Fora do lote continua totalmente legivel: o que muda e a cor e o peso,
+   nao o contraste do texto. Cinza-claro sobre branco era o que sumia. */
+.p.off{opacity:.64}
+.p.off .nome{color:var(--fg2);font-weight:600}
+.p.off .marca{background:var(--line2);color:var(--fg3);box-shadow:none}
+.p.off select,.p.off input[type=text]{color:var(--fg2)}
+/* Desativado nao deve brilhar: o effort marcado perde o destaque para nao
+   parecer que a linha esta no lote. */
+.p.off .eff input:checked+span{background:var(--line2);color:var(--fg2);
+  font-weight:600;box-shadow:none}
+
+/* --- interruptor --------------------------------------------------------- */
+.at{appearance:none;-webkit-appearance:none;margin:0;cursor:pointer;flex:none;
+  width:38px;height:22px;border-radius:999px;background:var(--line2);
+  border:0;position:relative;transition:background .18s}
+.at::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;
+  border-radius:50%;background:#fff;transition:left .18s cubic-bezier(.2,.7,.3,1.2);
+  box-shadow:0 1px 3px rgba(0,0,0,.3)}
+.at:checked{background:var(--grad)}
+.at:checked::after{left:18px}
+.at:focus-visible{outline:none;box-shadow:var(--anel)}
+
+.nome{font-weight:700;font-size:14.5px;display:flex;align-items:center;gap:10px;min-width:0}
+.marca{flex:none;width:28px;height:28px;border-radius:9px;background:var(--grad);
+  color:#fff;font-size:12.5px;font-weight:800;text-transform:uppercase;
+  display:grid;place-items:center;font-style:normal;
+  box-shadow:0 4px 12px -5px var(--ac), inset 0 1px 0 rgba(255,255,255,.35)}
+.tag{font-style:normal;font-size:9.5px;font-weight:800;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--fg2);background:var(--ac-soft);
+  border:1px solid var(--line);border-radius:999px;padding:3px 9px;white-space:nowrap}
+
+select,input[type=text],input[type=number]{
+  width:100%;background:var(--painel-solido);color:var(--fg);border:1px solid var(--line2);
+  border-radius:12px;padding:7px 10px;
+  font:12.5px ui-monospace,"Cascadia Code",monospace;
+  transition:border-color .15s ease,box-shadow .15s ease}
+select{appearance:none;-webkit-appearance:none;padding-right:30px;cursor:pointer;
+  background-repeat:no-repeat;background-position:right 12px center;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238b5cf6' stroke-width='1.8' fill='none' stroke-linecap='round'/%3E%3C/svg%3E")}
+select:hover,input[type=text]:hover,input[type=number]:hover{border-color:var(--ac)}
+select option{background:var(--painel-solido);color:var(--fg)}
+select:focus-visible,input:focus-visible{outline:none;border-color:var(--ac);box-shadow:var(--anel)}
+.livre{margin-top:6px}
+
+/* --- esforco ------------------------------------------------------------- */
+.eff{display:grid;grid-template-columns:repeat(4,1fr);gap:3px;
+  background:var(--off);border:1px solid var(--line);border-radius:14px;padding:3px}
+.eff label{cursor:pointer;text-align:center;min-width:0}
+.eff input{position:absolute;opacity:0;pointer-events:none}
+.eff label span{display:block;padding:6px 0;font-size:11px;font-weight:700;color:var(--fg2);
+  border-radius:11px;transition:background .15s,color .15s;white-space:nowrap}
+.eff label:hover span{color:var(--fg);background:var(--ac-soft)}
+/* Roxo cheio com branco por cima, nao gradiente: e texto de 11px, e aqui o
+   contraste vale mais que o acabamento. */
+.eff input:checked+span{background:var(--ac);color:var(--ac-fg);
+  box-shadow:0 4px 12px -5px var(--ac)}
+.eff input:focus-visible+span{box-shadow:var(--anel)}
+/* Uma opcao que nao vale NESTE provedor fica visivel e apagada: sumir com ela
+   esconderia que ela existe; deixar clicavel prometeria o que nao acontece. */
+.eff input:disabled+span{color:var(--fg3);background:transparent;cursor:not-allowed}
+.eff input:disabled:checked+span{background:var(--line2);color:var(--fg2);
+  font-weight:600;box-shadow:none}
+.eff.na{opacity:.6}
+.eff.na label{cursor:not-allowed}
+.eff.na label:hover span{color:var(--fg2);background:none}
+.na-nota{display:block;font-size:11px;color:var(--fg3);margin-top:5px;line-height:1.35}
+
+/* --- console: rodar o esquadrao daqui ------------------------------------ */
+.console{background:var(--painel);border:1px solid var(--line);border-radius:var(--raio);
+  padding:18px;box-shadow:var(--sombra);margin-bottom:18px;
+  -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+.console textarea{width:100%;min-height:92px;resize:vertical;
+  background:var(--painel-solido);color:var(--fg);border:1px solid var(--line2);
+  border-radius:14px;padding:13px 15px;
+  font:13.5px/1.5 ui-sans-serif,system-ui,"Segoe UI",sans-serif;
+  transition:border-color .15s ease,box-shadow .15s ease}
+.console textarea::placeholder{color:var(--fg3)}
+.console textarea:hover{border-color:var(--ac)}
+.console textarea:focus-visible{outline:none;border-color:var(--ac);box-shadow:var(--anel)}
+.console textarea:disabled{opacity:.6}
+.linha{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:12px}
+.dica-teclas{font-size:11.5px;color:var(--fg3)}
+.dica-teclas b{color:var(--fg2);font-weight:700}
+/* Barra de progresso: so aparece com lote em andamento. */
+.andamento{display:none;align-items:center;gap:12px;flex:1;min-width:210px}
+.andamento.v{display:flex}
+.barra{flex:1;height:6px;border-radius:999px;background:var(--off);overflow:hidden;
+  border:1px solid var(--line)}
+.barra i{display:block;height:100%;width:0;background:var(--grad);
+  transition:width .35s cubic-bezier(.2,.7,.3,1)}
+/* Enquanto nao ha quanto medir (consenso e arquiteto nao sabem o total de
+   chamadas de antemao), a barra anda sozinha em vez de mentir um numero. */
+.barra.indef i{width:35%;animation:desliza 1.5s ease-in-out infinite}
+@keyframes desliza{0%{margin-left:-35%}100%{margin-left:100%}}
+.relogio{font:12px ui-monospace,"Cascadia Code",monospace;color:var(--fg2);
+  font-variant-numeric:tabular-nums}
+
+/* --- resultados ---------------------------------------------------------- */
+#saida{display:flex;flex-direction:column;gap:10px;margin-bottom:18px}
+#saida:empty{display:none}
+.leva{display:flex;flex-direction:column;gap:10px}
+.leva+.leva{margin-top:8px}
+.sep{display:flex;align-items:center;gap:12px;margin:6px 2px 0;
+  font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--ac-txt)}
+.sep::after{content:"";flex:1;height:1px;background:var(--line2)}
+/* Rodada ainda sem nome: o titulo real so chega quando ela fecha. */
+.sep.abrindo{color:var(--fg3)}
+.r{background:var(--painel);border:1px solid var(--line);border-radius:var(--raio);
+  box-shadow:var(--sombra);overflow:hidden;
+  -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
+  animation:subir .35s cubic-bezier(.2,.7,.3,1) backwards}
+.r>summary{display:flex;align-items:center;gap:10px;padding:11px 16px;cursor:pointer;
+  list-style:none;user-select:none}
+.r>summary::-webkit-details-marker{display:none}
+.r>summary:hover{background:var(--ac-soft)}
+.r .quem{font-weight:700;font-size:14px}
+.r .qual{font:11.5px ui-monospace,"Cascadia Code",monospace;color:var(--fg3);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.r .seg{font:11.5px ui-monospace,monospace;color:var(--fg2);flex:none;
+  font-variant-numeric:tabular-nums}
+.r .corpo{padding:0 16px 15px;font-size:13.5px;line-height:1.6;
+  white-space:pre-wrap;word-wrap:break-word;overflow-wrap:anywhere}
+.r .corpo pre{background:var(--off);border:1px solid var(--line);border-radius:12px;
+  padding:12px 14px;overflow:auto;margin:10px 0;white-space:pre;
+  font:12px/1.5 ui-monospace,"Cascadia Code",monospace}
+.r .corpo code{background:var(--off);border:1px solid var(--line);border-radius:5px;
+  padding:1px 5px;font:12px ui-monospace,"Cascadia Code",monospace}
+.r .corpo pre code{background:none;border:0;padding:0}
+/* Estado no proprio cartao: quem esta pensando, quem entregou, quem caiu. */
+.r.rodando{border-color:var(--line2)}
+.r.rodando .seg::after{content:" ."; animation:reticencia 1.2s steps(4) infinite}
+@keyframes reticencia{0%{content:" ."}33%{content:" .."}66%{content:" ..."}}
+.r.falhou{border-color:rgba(190,60,60,.45)}
+.r.falhou .marca{background:linear-gradient(135deg,#7f1d1d,#dc2626);box-shadow:none}
+.r.falhou .corpo{color:#c23b3b;font-family:ui-monospace,"Cascadia Code",monospace;
+  font-size:12.5px}
+@media(prefers-color-scheme:dark){.r.falhou .corpo{color:#f2a0a0}}
+.pino{margin-left:auto;display:flex;gap:8px;align-items:center;flex:none}
+.copiar{font:600 11px inherit;padding:5px 11px;border-radius:999px;
+  background:transparent;border:1px solid var(--line2);color:var(--fg2);
+  box-shadow:none;cursor:pointer}
+.copiar:hover{border-color:var(--ac);color:var(--ac-txt);filter:none;transform:none}
+/* Linhas que o esquadrao imprime (plano do arquiteto, sintese do consenso). */
+.log{font:12px/1.55 ui-monospace,"Cascadia Code",monospace;color:var(--fg2);
+  background:var(--painel);border:1px dashed var(--line2);border-radius:14px;
+  padding:11px 15px;white-space:pre-wrap;word-wrap:break-word}
+.aviso{border-color:rgba(190,60,60,.5);color:#c23b3b}
+
+/* --- rodape -------------------------------------------------------------- */
+.rodape{display:grid;grid-template-columns:auto auto auto minmax(0,1fr);gap:16px;
+  align-items:start;margin-top:18px;
+  background:var(--painel);border:1px solid var(--line);border-radius:var(--raio);
+  padding:20px;box-shadow:var(--sombra);
+  -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+.campo{display:flex;flex-direction:column;gap:8px;min-width:0}
+.campo>span{font-size:10.5px;font-weight:800;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--fg3)}
+.campo:nth-child(1)>span::before{content:"\25C8  "}
+.campo:nth-child(2)>span::before{content:"\25D0  "}
+.campo:nth-child(3)>span::before{content:"\2261  "}
+.campo select,.campo input{width:auto;min-width:136px;font-family:inherit;font-size:13px}
+.campo .dica{font-size:11.5px;color:var(--fg2);letter-spacing:0;text-transform:none;
+  max-width:40ch;font-style:normal;line-height:1.45;font-weight:400}
+.campo.mudo select,.campo.mudo input{opacity:.5}
+
+/* --- doca de acoes ------------------------------------------------------- */
+/* Gruda no fim da rolagem em vez de flutuar sempre por cima: a barra fixa
+   comia a ultima linha da lista e obrigava a reservar altura no body. */
+.acoes{position:sticky;bottom:16px;z-index:5;margin-top:18px;
+  background:var(--bar);border:1px solid var(--line);border-radius:var(--raio);
+  padding:14px 18px;box-shadow:var(--sombra);
+  -webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}
+.acoes .interno{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+button{font:700 13.5px inherit;padding:11px 24px;border-radius:12px;border:0;
+  background:var(--grad);color:#fff;cursor:pointer;box-shadow:var(--sombra-btn);
+  transition:transform .12s ease,filter .12s ease}
+button:hover:not(:disabled){filter:brightness(1.1);transform:translateY(-1px)}
+button:active:not(:disabled){transform:none}
+button:focus-visible{outline:none;box-shadow:var(--anel)}
+button.sec{background:transparent;color:var(--fg2);border:1px solid var(--line2);
+  font-weight:600;box-shadow:none}
+button.sec:hover:not(:disabled){border-color:var(--ac);color:var(--ac-txt);filter:none}
+button:disabled{opacity:.5;cursor:default;transform:none;filter:none}
+.nota{color:var(--fg3);font-size:12px}
+.espaco{flex:1}
+#ok{color:var(--ok);font-size:12.5px;font-weight:800;opacity:0;transition:opacity .18s}
+#ok.v{opacity:1}
+#sujo{color:var(--fg2);font-size:12.5px}
+
+@media(max-width:760px){
+  .p{grid-template-columns:38px 1fr;row-gap:12px}
+  .p>*:nth-child(3),.p>*:nth-child(4){grid-column:2}
+  .rodape{grid-template-columns:1fr}
+  h1{font-size:27px}}
+/* Quem pediu menos animacao nao recebe nenhuma - o canvas ja respeita isso
+   por conta propria; aqui vale para os cartoes e a doca. */
+@media(prefers-reduced-motion:reduce){
+  *{animation:none!important;transition:none!important}}
+</style>
+<canvas id=fundo aria-hidden=true></canvas>
+<div class=wrap>
+<header>
+  <div class=eyebrow>Claude &middot; painel</div>
+  <h1>Esquadr&atilde;o</h1>
+  <p>Quem entra no lote, com qual modelo e qual esfor&ccedil;o. Salvar escreve
+  <kbd>~/.claude/esquadrao.json</kbd> &mdash; o comando <kbd>esquadrao</kbd> e o
+  Claude leem de l&aacute;.</p>
+  <div class=chips>
+    <span class=chip id=c_lote></span>
+    <span class=chip id=c_modo></span>
+    <span class=chip id=c_juiz></span>
+    <span class=chip id=c_esf></span>
+    <span class=chip>127.0.0.1:8777</span>
+  </div>
+</header>
+
+<div class=console>
+  <textarea id=caixa rows=4 spellcheck=false
+    placeholder="Pergunte ao esquadr&atilde;o. A mesma pergunta vai para todos os provedores ligados abaixo, com o modo e o juiz escolhidos no rodap&eacute;."></textarea>
+  <div class=linha>
+    <button id=btrodar onclick=rodar()>Rodar esquadr&atilde;o</button>
+    <button id=btparar class=sec onclick=parar() hidden>Parar</button>
+    <button id=btlimpar class=sec onclick=limpar() hidden>Limpar</button>
+    <span class=dica-teclas><b>Ctrl+Enter</b> roda</span>
+    <span class=andamento id=andamento>
+      <span class=barra id=barra><i></i></span>
+      <span class=relogio id=relogio></span>
+    </span>
+  </div>
+</div>
+
+<div id=saida></div>
+
+<div class=grade>
+  <div class=cab><span></span><span>Provedor</span><span>Modelo</span><span>Esfor&ccedil;o</span></div>
+  <div id=lista></div>
+</div>
+
+<div class=rodape>
+  <label class=campo><span>Modo</span>
+    <select id=modo><option>todos<option>refino<option>consenso<option>arquiteto</select></label>
+  <label class=campo><span>Juiz</span><select id=juiz></select></label>
+  <label class=campo id=campo_rodadas><span>Rodadas</span>
+    <input id=rodadas type=number min=2 max=10></label>
+  <div class=campo><span>O que este modo faz</span><i class=dica id=dica_modo></i></div>
+</div>
+
+<div class=acoes><div class=interno>
+  <button id=btsalvar onclick=salvar()>Salvar</button>
+  <span id=ok>salvo &#10003;</span>
+  <span id=sujo></span>
+  <span class=espaco></span>
+  <button id=bat class=sec onclick=atualizar()>Atualizar modelos</button>
+  <span class=nota id=carimbo></span>
+</div></div>
+</div>
+
+<script>
+// --- fundo ------------------------------------------------------------------
+(function(){
+  var cv=document.getElementById('fundo'), cx=cv.getContext('2d'), pts=[], raf=0;
+  // Quem pediu menos animacao recebe o campo parado, desenhado uma vez so.
+  var parado=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function cor(){return getComputedStyle(document.documentElement)
+      .getPropertyValue('--ac-txt').trim()||'#7c3aed';}
+  function dimensiona(){
+    var dpr=Math.min(window.devicePixelRatio||1, 2);   // 2 ja basta; 3 so custa
+    var l=innerWidth, a=innerHeight;
+    cv.width=Math.round(l*dpr); cv.height=Math.round(a*dpr);
+    cv.style.width=l+'px'; cv.style.height=a+'px';
+    cx.setTransform(dpr,0,0,dpr,0,0);                  // desenha em px CSS
+    // Densidade por area, nao numero fixo: janela larga nao fica vazia.
+    var n=Math.round(Math.min(110, l*a/14000));
+    pts=[];
+    for(var i=0;i<n;i++) pts.push({x:Math.random()*l,y:Math.random()*a,
+      vx:(Math.random()-.5)*.12, vy:(Math.random()-.5)*.12,
+      r:Math.random()*1.3+.5});
+  }
+  function passo(){
+    var l=innerWidth, a=innerHeight, c=cor();
+    cx.clearRect(0,0,l,a);
+    for(var i=0;i<pts.length;i++){
+      var p=pts[i];
+      if(!parado){p.x+=p.vx; p.y+=p.vy;
+        if(p.x<0||p.x>l) p.vx*=-1;
+        if(p.y<0||p.y>a) p.vy*=-1;}
+      // Liga os vizinhos: a linha some com a distancia, entao o desenho
+      // respira sem precisar de brilho.
+      for(var j=i+1;j<pts.length;j++){
+        var q=pts[j], dx=p.x-q.x, dy=p.y-q.y, d=Math.hypot(dx,dy);
+        if(d<120){cx.globalAlpha=(1-d/120)*.13; cx.strokeStyle=c;
+          cx.lineWidth=.7; cx.beginPath(); cx.moveTo(p.x,p.y);
+          cx.lineTo(q.x,q.y); cx.stroke();}}
+      cx.globalAlpha=.5; cx.fillStyle=c;
+      cx.beginPath(); cx.arc(p.x,p.y,p.r,0,6.284); cx.fill();
+    }
+    cx.globalAlpha=1;
+    if(!parado) raf=requestAnimationFrame(passo);
+  }
+  function recomeca(){cancelAnimationFrame(raf); dimensiona(); passo();}
+  addEventListener('resize',recomeca);
+  // Arrastar a janela para um monitor de outra densidade muda o
+  // devicePixelRatio SEM disparar resize: o buffer continua no DPR antigo e o
+  // desenho sai borrado. Esta media query avisa; ela vale para um valor so,
+  // entao se reassina a cada mudanca.
+  (function vigia(){
+    matchMedia('(resolution: '+(window.devicePixelRatio||1)+'dppx)')
+      .addEventListener('change', function(){recomeca(); vigia();}, {once:true});
+  })();
+  // Aba escondida nao precisa animar: o laco para e volta sozinho.
+  document.addEventListener('visibilitychange',function(){
+    if(document.hidden) cancelAnimationFrame(raf); else if(!parado) passo();});
+  recomeca();
+})();
+
+const EFFORTS=__EFFORTS__, XHIGH=__XHIGH__, C=__CONFIG__, NOMES=__NOMES__, MODELOS=__MODELOS__,
+      TIPO=__TIPO__, QUANDO=__QUANDO__, EFEITO=__EFEITO__, RODANDO=__RODANDO__;
+const lista=document.getElementById('lista');
+
+// O que cada modo faz — dito na pagina pro campo Rodadas.
+const EXPL={
+  todos:'Cada provedor responde sozinho; voce le as N respostas. Uma rodada. Rodadas nao se aplica.',
+  refino:'Independente -> critica cruzada -> consolidacao pelo juiz. Rodadas conta a consolidacao: 3 = 1 independente + 1 critica + consolidado.',
+  consenso:'Laco ate todos ratificarem a mesma sintese. Rodadas e o teto: se estourar, o que ficou em aberto E o resultado.',
+  arquiteto:'O juiz quebra o objetivo em 2 a 6 subtarefas, cada uma vai para o primeiro slot ATIVO da rota em perfis.json, rodam em ondas, o juiz consolida e revisa. Sem rodadas: o numero de etapas quem decide e o juiz.'};
+
+for(const n of NOMES){
+  const c=C.provedores[n]||{ativo:false,effort:'low',modelo:''};
+  const d=document.createElement('div');
+  d.className='p'+(c.ativo?'':' off'); d.dataset.n=n;
+  d.innerHTML='<input type=checkbox class=at '+(c.ativo?'checked':'')
+      +' aria-label="'+n+' no lote">'
+    +'<span class=nome><i class=marca>'+n[0]+'</i>'+n+'<i class=tag>'+(TIPO[n]||'')+'</i></span>'
+    +'<span><select class=mod aria-label="modelo de '+n+'"></select>'
+    +'<input type=text class=livre spellcheck=false hidden placeholder="nome do modelo"></span>'
+    +'<span><span class=eff>'+EFFORTS.map(function(e){
+        return '<label><input type=radio name=e_'+n+' value="'+e+'"'
+             +(c.effort===e?' checked':'')+'><span>'+e+'</span></label>';}).join('')
+    +'</span><i class=na-nota></i></span>';
+
+  d.querySelector('.at').onchange=function(ev){
+    d.classList.toggle('off',!ev.target.checked); resumo(); sujou();};
+
+  var sel=d.querySelector('.mod'), livre=d.querySelector('.livre');
+  var conhecidos=MODELOS[n]||[], atual=c.modelo||conhecidos[0]||'';
+  var sabido=conhecidos.indexOf(atual)>=0;
+  sel.innerHTML=conhecidos.map(function(m){
+      return '<option'+(m===atual?' selected':'')+'>'+m+'</option>';}).join('')
+    +'<option value="__outro__"'+(sabido?'':' selected')+'>outro…</option>';
+  if(!sabido) livre.value=atual;
+  // Onde o effort nao chega no provedor, a coluna fica travada e diz por que.
+  // No agy ele e sufixo do nome e SO a familia gemini aceita — por isso a
+  // checagem depende do modelo escolhido, nao so do provedor.
+  var eff=d.querySelector('.eff'), nota=d.querySelector('.na-nota');
+  var vale=function(m){
+    if(EFEITO[n]==='nunca') return 'este wrapper descarta o esforço';
+    if(EFEITO[n]==='gemini'){
+      if(/-(low|medium|high)$/.test(m)) return 'o esforço já está no nome do modelo';
+      return m.indexOf('gemini-')===0 ? null : 'o esforço já vem no nome deste modelo';}
+    return null;};
+  var sync=function(){
+    var o=sel.value==='__outro__'; livre.hidden=!o;
+    var m=o?livre.value:sel.value;
+    var motivo=vale(m);
+    var travado=motivo!==null;
+    eff.classList.toggle('na',travado);
+    // O xhigh nao existe em todo provedor: em vez de sumir com a opcao (o que
+    // esconderia que ela existe), ela fica visivel e apagada so onde nao vale.
+    var temX=XHIGH.indexOf(n)>=0;
+    Array.prototype.forEach.call(eff.querySelectorAll('input'),function(i){
+      i.disabled=travado||(i.value==='xhigh'&&!temX);
+      // Config salva com xhigh num provedor que nao aceita cairia numa chamada
+      // recusada: reancora no high, que todos que usam effort aceitam.
+      if(i.disabled&&i.checked&&i.value==='xhigh'){
+        i.checked=false;
+        var alto=eff.querySelector('input[value=high]'); if(alto) alto.checked=true;}});
+    nota.textContent=travado?motivo:(temX?'':'xhigh indisponível neste provedor');
+    resumo();};
+  sel.onchange=function(){sync();sujou();};
+  livre.oninput=function(){sync();sujou();};
+  eff.onchange=function(){resumo();sujou();};
+  sync();
+  lista.appendChild(d);
+}
+
+juiz.innerHTML=NOMES.map(function(n){
+  return '<option'+(n===C.juiz?' selected':'')+'>'+n+'</option>';}).join('');
+modo.value=C.modo; rodadas.value=C.rodadas;
+carimbo.textContent='modelos lidos dos provedores em '+QUANDO;
+
+function estado(){
+  var provedores={};
+  Array.prototype.forEach.call(lista.children,function(d){
+    var n=d.dataset.n, sel=d.querySelector('.mod');
+    var marcado=d.querySelector('input[name=e_'+n+']:checked');
+    provedores[n]={ativo:d.querySelector('.at').checked,
+      modelo:sel.value==='__outro__'?d.querySelector('.livre').value.trim():sel.value,
+      effort:marcado?marcado.value:'low'};});
+  return {provedores:provedores,modo:modo.value,juiz:juiz.value,rodadas:+rodadas.value};
+}
+
+// Resumo ao vivo: o cabecalho responde a cada clique, sem precisar salvar.
+function resumo(){
+  // Roda tambem no meio da montagem da lista (cada linha chama sync -> resumo),
+  // entao so conta o que ja existe no DOM: NOMES ainda tem provedor sem linha.
+  var e=estado(), postos=Object.keys(e.provedores);
+  var ativos=postos.filter(function(n){return e.provedores[n].ativo;});
+  c_lote.innerHTML='<b>'+ativos.length+'</b> de '+NOMES.length+' no lote';
+  c_modo.innerHTML='modo <b>'+e.modo+'</b>';
+  c_juiz.innerHTML='juiz <b>'+e.juiz+'</b>';
+  // So conta o esforco de quem esta no lote E cujo wrapper repassa: e o unico
+  // numero honesto sobre quanto este lote vai puxar.
+  var pesa=ativos.filter(function(n){
+    return !document.querySelector('[data-n='+n+'] .eff').classList.contains('na');});
+  var alto=pesa.filter(function(n){
+    return ['high','xhigh'].indexOf(e.provedores[n].effort)>=0;}).length;
+  c_esf.innerHTML='esforço alto em <b>'+alto+'</b> de '+pesa.length;
+  c_esf.className='chip'+(alto?' forte':'');
+}
+function pinta_modo(){
+  var usa_rodadas=modo.value==='consenso'||modo.value==='refino';
+  campo_rodadas.classList.toggle('mudo',!usa_rodadas);
+  rodadas.disabled=!usa_rodadas;
+  dica_modo.textContent=EXPL[modo.value]||'';
+}
+modo.onchange=function(){pinta_modo();resumo();sujou();};
+juiz.onchange=function(){resumo();sujou();};
+rodadas.oninput=sujou;
+
+// Salvar so acende quando ha mudanca pendente: botao sempre vivo nao diz nada.
+var limpo=JSON.stringify(estado());
+function sujou(){
+  var mudou=JSON.stringify(estado())!==limpo;
+  btsalvar.disabled=!mudou;
+  sujo.textContent=mudou?'alterações não salvas':'';
+  if(mudou) ok.className='';
+}
+function atualizar(){
+  bat.disabled=true; bat.textContent='consultando provedores…';
+  fetch('/modelos',{method:'POST'}).then(function(r){return r.json();})
+    .then(function(){location.reload();})
+    .catch(function(){bat.disabled=false;bat.textContent='falhou — tentar de novo';});
+}
+function salvar(){
+  var e=estado();
+  fetch('/salvar',{method:'POST',body:JSON.stringify(e)})
+    .then(function(r){return r.text();}).then(function(){
+      limpo=JSON.stringify(e); sujou();
+      ok.className='v'; setTimeout(function(){ok.className='';},1800);});
+}
+
+// --- console: rodar o esquadrao pela pagina ---------------------------------
+//
+// A pagina nao decide nada sobre o lote: manda o estado que esta na tela e o
+// servidor chama as mesmas funcoes do esquadrao.py que o terminal chamaria.
+// O que chega de volta e um fluxo de eventos (SSE), um por provedor, no
+// instante em que cada um termina — esperar o lote inteiro para so entao
+// mostrar tudo seria minutos de tela parada.
+var fonte=null, emCurso=false, t0=0, tique=null, esperados=0, prontos=0, leva=null;
+// Ultimo id de evento aplicado. O EventSource reconecta sozinho ao cair, e sem
+// esta guarda o historico reenviado entrava de novo e a pagina duplicava tudo.
+var visto=0;
+// Lote reatado comeca com o relogio errado (zero = agora, e nao o inicio real
+// la no servidor). O primeiro evento traz `t`, os segundos ja decorridos, e e
+// com ele que o zero e reposicionado -- uma vez so.
+var calibrar=false;
+
+function esc(t){return t.replace(/[&<>]/g,function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
+
+// Marcacao minima e de proposito: bloco ``` e `codigo`. Modelo devolve muito
+// bloco de codigo, e sem isso a indentacao vira sopa; o resto do markdown nao
+// paga o risco de reescrever o texto do modelo.
+function corpo(t){
+  var partes=esc(t).split(/```/), out='';
+  for(var i=0;i<partes.length;i++){
+    if(i%2){ out+='<pre><code>'+partes[i].replace(/^[a-z0-9+#-]*\n/i,'')+'</code></pre>'; }
+    else   { out+=partes[i].replace(/`([^`\n]+)`/g,'<code>$1</code>'); }
+  }
+  return out;
+}
+
+function relogio_liga(quando){
+  t0=quando||Date.now();
+  clearInterval(tique);
+  tique=setInterval(function(){
+    var s=Math.max(0,Math.round((Date.now()-t0)/1000));
+    relogio.textContent=String((s/60)|0).padStart(2,'0')+':'+String(s%60).padStart(2,'0')
+      +(esperados?'  ·  '+prontos+'/'+esperados:'  ·  '+prontos+' de volta');
+  },250);
+}
+
+// Quantos provedores esta rodada espera: conta os cartoes da leva aberta, em
+// vez de repetir o total da primeira. A consolidacao tem UMA chamada — mostrar
+// "1 de 3" ali seria progresso de uma rodada que nao esta acontecendo.
+function recalibra(){
+  if(!leva){esperados=0;prontos=0;return;}
+  var cartoes=leva.querySelectorAll('.r');
+  esperados=cartoes.length;
+  prontos=leva.querySelectorAll('.r:not(.rodando)').length;
+  if(!barra.classList.contains('indef'))
+    barra.firstElementChild.style.width=(esperados?prontos/esperados*100:0)+'%';
+}
+
+// Uma leva por rodada, aberta ANTES das respostas: o titulo definitivo so
+// chega quando a rodada fecha, e sem o container ele apareceria embaixo das
+// proprias respostas que nomeia.
+function nova_leva(titulo){
+  leva=document.createElement('div');
+  leva.className='leva';
+  var h=document.createElement('div');
+  h.className='sep abrindo'; h.textContent=titulo||'respondendo…';
+  leva.appendChild(h); saida.appendChild(leva);
+  return leva;
+}
+
+// Busca presa a leva atual: no refino o mesmo provedor responde em toda
+// rodada, e uma busca global faria a rodada 2 sobrescrever a resposta da 1.
+// Um cartao e uma CHAMADA, nao um provedor. So reaproveita o que ainda esta
+// pendente: no arquiteto o juiz fala duas vezes na mesma fase (decompoe e
+// consolida), e reaproveitar por nome fazia a segunda resposta APAGAR a
+// primeira -- o plano sumia da tela sem deixar rastro.
+function cartao(n){
+  if(!leva) nova_leva();
+  var d=leva.querySelector('.r.rodando[data-n="'+n+'"]');
+  if(d) return d;
+  d=document.createElement('details');
+  d.className='r rodando'; d.dataset.n=n; d.open=true;
+  d.innerHTML='<summary><i class=marca>'+esc(n[0])+'</i>'
+    +'<span class=quem>'+esc(n)+'</span><span class=qual></span>'
+    +'<span class=pino><span class=seg>pensando</span></span></summary>'
+    +'<div class=corpo></div>';
+  leva.appendChild(d);
+  return d;
+}
+
+function bloco(cls,txt){
+  var d=document.createElement('div');
+  d.className=cls; d.textContent=txt;
+  // Abre leva se nao houver: no arquiteto o plano e as etapas sao SO texto, e
+  // soltos no topo eles ficavam fora da fase que os nomeia.
+  if(!leva&&cls==='log') nova_leva();
+  (cls==='log'?leva:saida).appendChild(d); rola();
+}
+// Segue o fim da saida so enquanto o usuario ja estiver la embaixo: puxar a
+// rolagem de quem esta lendo uma resposta antiga e roubar o controle dele.
+function rola(){
+  var perto=innerHeight+scrollY > document.body.scrollHeight-260;
+  if(perto) scrollTo({top:document.body.scrollHeight,behavior:'smooth'});
+}
+
+function evento(e){
+  // Reconexao reenvia o que ja passou: aplica so o que e novo.
+  if(e.i){ if(e.i<=visto) return; visto=e.i; }
+  if(e.tipo==='comecou'){
+    esperados=e.nomes.length; prontos=0;
+    barra.classList.toggle('indef', e.modo==='consenso'||e.modo==='arquiteto');
+    // Nao pre-cria leva nem cartao: o evento 'inicio' de cada provedor chega
+    // no mesmo instante (em_paralelo dispara todos juntos) e ja monta o
+    // cartao no lugar certo. Pre-criar deixava uma leva orfa por lote, com
+    // cartoes eternamente "pensando" que rodada nenhuma preenchia.
+  }
+  else if(e.tipo==='rodada'){
+    // A rodada ACABOU de fechar: batiza a leva aberta e recolhe os cartoes
+    // dela, para a proxima entrar com a tela limpa. A leva seguinte nasce na
+    // primeira resposta que chegar.
+    if(!leva) nova_leva();          // fase so de texto (plano, etapas) tambem
+    {                               // merece titulo em vez de sumir calada
+      var h=leva.querySelector('.sep');
+      h.textContent=e.titulo; h.className='sep';
+      Array.prototype.forEach.call(leva.querySelectorAll('.r'),function(d){d.open=false;});
+    }
+    leva=null; esperados=0; prontos=0; rola();
+  }
+  else if(e.tipo==='inicio'){
+    var d=cartao(e.nome); d.className='r rodando';
+    d.querySelector('.qual').textContent=e.modelo+(e.effort?'  ['+e.effort+']':'');
+    d.querySelector('.seg').textContent='pensando';
+    d.querySelector('.corpo').textContent='';
+    recalibra();
+  }
+  else if(e.tipo==='resposta'){
+    var d=cartao(e.nome);
+    d.className='r'+(e.ok?'':' falhou');
+    d.querySelector('.seg').textContent=Math.round(e.seg)+'s';
+    d.querySelector('.corpo').innerHTML=corpo(e.texto);
+    if(!d.querySelector('.copiar')){
+      var b=document.createElement('button');
+      b.className='copiar'; b.textContent='copiar';
+      b.onclick=function(ev){ev.preventDefault();ev.stopPropagation();
+        navigator.clipboard.writeText(e.texto);
+        b.textContent='copiado'; setTimeout(function(){b.textContent='copiar';},1400);};
+      d.querySelector('.pino').appendChild(b);
+    }
+    recalibra();
+    rola();
+  }
+  else if(e.tipo==='log'){
+    var t=(e.texto||'').trim();
+    // O cabecalho de rodada ja virou separador; repetir a moldura de '=' aqui
+    // so empurraria a resposta para fora da tela.
+    // Molduras de terminal ('====' e '####') nao dizem nada numa pagina que ja
+    // tem separador visual; cortam so elas, nunca o texto ao lado.
+    if(t&&!/^[=#]+$/.test(t)&&t.indexOf('====')<0&&t.indexOf('####')<0)
+      bloco('log',t);
+  }
+  else if(e.tipo==='fim'){
+    // O consenso termina imprimindo a sintese, sem passar por `mostra` — a
+    // leva aberta ficaria com o titulo provisorio ("respondendo…") justamente
+    // no bloco que carrega o resultado.
+    if(leva&&leva.querySelector('.sep.abrindo')){
+      var h=leva.querySelector('.sep'); h.className='sep';
+      h.textContent='RESULTADO';
+    }
+    if(e.erro) bloco('log aviso','falhou: '+e.erro);
+    if(e.parado) bloco('log','parado a pedido — o que ja tinha voltado esta acima.');
+    termina();
+  }
+}
+
+function termina(){
+  emCurso=false; t0=0;
+  if(fonte){fonte.close(); fonte=null;}
+  clearInterval(tique);
+  Array.prototype.forEach.call(saida.querySelectorAll('.r.rodando'),function(d){
+    d.className='r falhou';
+    d.querySelector('.seg').textContent='—';
+    if(!d.querySelector('.corpo').textContent)
+      d.querySelector('.corpo').textContent='nao chegou a responder';});
+  btrodar.disabled=false; btrodar.textContent='Rodar esquadrão';
+  btparar.hidden=true; btlimpar.hidden=false;
+  caixa.disabled=false; andamento.classList.remove('v');
+}
+
+// Lote vivo quando a pagina abriu (recarga no meio, ou outra aba): reata em
+// vez de deixar a tela muda enquanto o servidor segue trabalhando.
+function reata(){
+  if(!RODANDO) return;
+  emCurso=true; btrodar.disabled=true; btrodar.textContent='rodando…';
+  btparar.hidden=false; btlimpar.hidden=true; caixa.disabled=true;
+  andamento.classList.add('v'); barra.classList.add('indef');
+  saida.innerHTML=''; leva=null; visto=0; esperados=0; prontos=0;
+  calibrar=true; relogio_liga();
+  escuta();
+}
+
+function escuta(){
+  fonte=new EventSource('/eventos');
+  fonte.onmessage=function(m){
+    var e=JSON.parse(m.data);
+    // Cada evento diz quantos segundos de lote ja tinham passado quando
+    // aconteceu: num lote reatado e assim que o relogio acha o zero certo.
+    if(calibrar&&typeof e.t==='number'){calibrar=false; relogio_liga(Date.now()-e.t*1000);}
+    evento(e);};
+  fonte.onerror=function(){
+    // CLOSED quer dizer que o EventSource desistiu de vez -- e ele so desiste
+    // quando o servidor responde 204, que e exatamente como o painel diz "nao
+    // ha mais lote". Fechar a vista aqui evita a pagina ficar eternamente em
+    // "rodando…" caso o evento de fim tenha se perdido na queda.
+    if(fonte&&fonte.readyState===2){ termina(); return; }
+    // Qualquer outro erro com lote vivo: ele reconecta sozinho e retoma pelo
+    // Last-Event-ID. Nao mexer.
+    if(!emCurso&&fonte){fonte.close();fonte=null;}
+  };
+}
+
+function rodar(){
+  var q=caixa.value.trim();
+  if(!q||emCurso) return;
+  var e=estado(); e.pergunta=q;
+  var ativos=Object.keys(e.provedores).filter(function(n){return e.provedores[n].ativo;});
+  if(!ativos.length){bloco('log aviso','nenhum provedor ligado — ligue ao menos um abaixo.');return;}
+  saida.innerHTML=''; leva=null; visto=0; prontos=0; esperados=ativos.length;
+  barra.firstElementChild.style.width='0';
+  emCurso=true; btrodar.disabled=true; btrodar.textContent='rodando…';
+  btparar.hidden=false; btlimpar.hidden=true; caixa.disabled=true;
+  andamento.classList.add('v'); relogio_liga();
+  fetch('/rodar',{method:'POST',body:JSON.stringify(e)})
+    .then(function(r){ if(!r.ok) throw new Error(r.status===409
+        ? 'ja ha um lote em andamento' : 'o painel recusou o pedido ('+r.status+')');
+      return r.json();})
+    .then(function(){escuta();})
+    .catch(function(err){bloco('log aviso',String(err.message||err)); termina();});
+}
+
+function parar(){
+  btparar.disabled=true; btparar.textContent='parando…';
+  fetch('/parar',{method:'POST'}).finally(function(){
+    btparar.disabled=false; btparar.textContent='Parar';});
+}
+
+function limpar(){saida.innerHTML=''; leva=null; btlimpar.hidden=true;}
+
+reata();
+caixa.addEventListener('keydown',function(ev){
+  if((ev.ctrlKey||ev.metaKey)&&ev.key==='Enter'){ev.preventDefault();rodar();}});
+
+document.addEventListener('keydown',function(ev){
+  if((ev.ctrlKey||ev.metaKey)&&ev.key==='s'){ev.preventDefault();
+    if(!btsalvar.disabled) salvar();}});
+pinta_modo(); resumo(); sujou();
+</script>

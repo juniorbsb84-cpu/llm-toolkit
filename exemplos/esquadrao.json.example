@@ -1,0 +1,82 @@
+{
+  "provedores": {
+    "agy": {
+      "ativo": true,
+      "modelo": "gemini-3.1-pro",
+      "effort": "high"
+    },
+    "agy2": {
+      "ativo": true,
+      "modelo": "gemini-3.8-flash",
+      "effort": "high"
+    },
+    "agy3": {
+      "ativo": false,
+      "modelo": "gemini-3.1-pro",
+      "effort": "high"
+    },
+    "alibaba": {
+      "ativo": true,
+      "modelo": "qwen3.8-max",
+      "effort": "medium"
+    },
+    "claude": {
+      "ativo": true,
+      "modelo": "opus",
+      "effort": "low"
+    },
+    "claude2": {
+      "ativo": false,
+      "modelo": "opus",
+      "effort": "xhigh"
+    },
+    "codex": {
+      "ativo": true,
+      "modelo": "gpt-5.6-sol",
+      "effort": "low"
+    },
+    "codex2": {
+      "ativo": false,
+      "modelo": "gpt-5.6-sol",
+      "effort": "medium"
+    },
+    "commandcode": {
+      "ativo": true,
+      "modelo": "xiaomi/mimo-v2.5-pro",
+      "effort": "high"
+    },
+    "deepseek": {
+      "ativo": true,
+      "modelo": "deepseek-v4-pro",
+      "effort": "high"
+    },
+    "opencode": {
+      "ativo": true,
+      "modelo": "opencode-go/minimax-m3",
+      "effort": "high"
+    },
+    "opencode2": {
+      "ativo": true,
+      "modelo": "opencode-go/kimi-k3",
+      "effort": "medium"
+    },
+    "openrouter": {
+      "ativo": true,
+      "modelo": "meta/muse-spark-1.3-contributor",
+      "effort": "high"
+    },
+    "openrouter2": {
+      "ativo": true,
+      "modelo": "z-ai/glm-5.3-flash",
+      "effort": "high"
+    },
+    "openrouter3": {
+      "ativo": true,
+      "modelo": "deepseek/deepseek-v4.1-flash",
+      "effort": "high"
+    }
+  },
+  "modo": "refino",
+  "juiz": "codex",
+  "rodadas": 3
+}
