@@ -1,0 +1,9 @@
+# Copie para ~/.llm-apis.txt (ou aponte LLM_APIS para outro caminho).
+# Um par CHAVE=valor por linha. Este arquivo fica FORA do repositorio.
+#
+# So os provedores por HTTP precisam de chave. agy, codex, claude,
+# opencode e commandcode usam a sessao do CLI ja logado na maquina.
+
+OPENROUTER_API_KEY=sk-or-v1-000000000000000000000000000000000000000000000000
+ALIBABA_API_KEY=sk-sp-000000000000000000000000000000
+DEEPSEEK_API_KEY=sk-00000000000000000000000000000000

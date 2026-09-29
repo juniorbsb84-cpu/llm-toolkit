@@ -1,0 +1,18 @@
+# Chaves — NUNCA versionar
+.llm-apis.txt
+APIs.txt
+*.key
+.env
+
+# Config e cache locais
+esquadrao.json
+perfis.json
+modelos.json
+
+# Saidas de execucao
+saidas/
+*.bak
+*.bak-*
+
+__pycache__/
+*.py[cod]

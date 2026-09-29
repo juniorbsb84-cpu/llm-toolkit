@@ -1,0 +1,30 @@
+{
+  "_nota": "Modo arquiteto do esquadrao: cada especialidade lista slots em ordem de preferencia. Atribuicao = primeiro ATIVO no painel. Toggle off = fora do sorteio. Edite a vontade; sem este arquivo valem os padroes do esquadrao.py.",
+  "rota": {
+    "codigo": ["codex", "codex2", "openrouter2", "commandcode", "deepseek", "claude", "claude2"],
+    "frontend": ["commandcode", "openrouter2", "codex", "codex2", "agy"],
+    "visao": ["agy", "agy2", "agy3", "alibaba", "opencode", "opencode2", "commandcode"],
+    "texto": ["claude", "claude2", "openrouter3", "openrouter", "agy"],
+    "raciocinio": ["claude", "claude2", "agy", "agy2", "alibaba", "deepseek"],
+    "dados": ["alibaba", "openrouter", "deepseek", "agy"],
+    "pesquisa": ["agy", "agy2", "agy3", "commandcode", "claude", "claude2"],
+    "geral": ["agy", "agy2", "claude", "claude2", "openrouter2", "alibaba"]
+  },
+  "foco": {
+    "agy": "geral frontier, raciocinio longo, web (com ferramentas)",
+    "agy2": "geral frontier, 2a janela agy",
+    "agy3": "geral frontier, 3a janela agy",
+    "alibaba": "geral multimodal, analise longa, dados",
+    "claude": "raciocinio, escrita, codigo cuidadoso",
+    "claude2": "raciocinio, escrita, 2a janela claude",
+    "codex": "codigo, terminal, refatoracao",
+    "codex2": "codigo, terminal, 2a janela gpt",
+    "commandcode": "coding longo, agentes, web nativa",
+    "deepseek": "codigo/raciocinio barato, texto puro",
+    "opencode": "multimodal barato",
+    "opencode2": "multimodal barato, 2a janela opencode",
+    "openrouter": "analise de texto",
+    "openrouter2": "coding eficiente, agentes",
+    "openrouter3": "texto geral"
+  }
+}
