@@ -1,18 +1,20 @@
 #!/usr/bin/env python
 """A mesma pergunta para varios modelos ao mesmo tempo.
 
-  python tools/esquadrao.py "a pergunta"
-  python tools/esquadrao.py -i foto.png "o que ha de errado aqui?"
-  python tools/esquadrao.py --modo refino "como estruturar X?"
-  cat contrato.txt | python tools/esquadrao.py --so agy,codex,openrouter
+  python ~/.claude/tools/esquadrao.py "a pergunta"
+  python ~/.claude/tools/esquadrao.py -i foto.png "o que ha de errado aqui?"
+  python ~/.claude/tools/esquadrao.py --modo refino "como estruturar X?"
+  cat contrato.txt | python ~/.claude/tools/esquadrao.py --so agy,codex,openrouter
 
 Modos:
   todos    (padrao) cada provedor responde sozinho; voce le as N respostas.
+           --rodadas N repete a pergunta N vezes (reamostragem, sem juiz).
   refino   N rodadas: independente, (N-2) de critica cruzada, consolidacao.
            N=3 (padrao antigo) = 1 independente + 1 critica + consolidado.
   arquiteto o juiz quebra o objetivo em 2 a 6 subtarefas rotuladas por
            especialidade, cada uma vai para o primeiro slot ATIVO daquela rota
            (perfis.json), rodam em ondas, o juiz consolida e revisa o resultado.
+           --rodadas 1 entrega na consolidacao, sem a revisao final.
   consenso LACO ate todos ratificarem a mesma sintese. Cada rodada: propor ->
            um juiz consolida -> todos votam RATIFICO/DISCORDO. Objecao volta
            para a rodada seguinte. Para na unanimidade, nao num numero fixo.
@@ -22,20 +24,37 @@ Modos:
 O valor nao esta em ter N respostas, esta na DIVERGENCIA entre elas: onde todos
 concordam nao precisa de revisao humana, onde rachar e onde o problema e dificil.
 
+-f / --ferramentas libera web e arquivo. SEM ela nenhum provedor alcanca a rede:
+o lote todo responde do treino, e um modelo sem web nao diz "nao sei" -- ele
+preenche, inclusive afirmando que consultou a pagina. Use sempre que a pergunta
+depender de algo que esta na internet ou no disco.
+
+Quem de fato ganha web com a flag (medido em 19/09/2026 contra example.com):
+  agy         OK
+  claude      OK (precisa de --allowedTools; so --tools default nao basta)
+  commandcode OK (ja roda com --tools-all sempre)
+  codex       fraco: web_search volta vazia e o exec sandboxado falha no Windows
+  opencode    NAO verificado: com -f pendurou 800s sem devolver nada, em
+              19/09/2026. Fica fora do lote padrao de qualquer forma
+              (ver o comentario do PADRAO). Nao conte com ele para web.
+  openrouter, alibaba, deepseek: API crua, IGNORAM a flag -- avisado no inicio.
+
 Provedores e travas herdados de llm.py (mesmo diretorio).
 """
-import argparse, json, os, sys, time
+import argparse, json, os, re, sys, time
+import registro
 from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from llm import le_stdin, PROVEDORES, diz  # noqa: E402
+from llm import (le_stdin, PROVEDORES, diz, FERRAMENTAS_OK,  # noqa: E402
+                 base)
 
 # opencode fica de fora: a conta foi bloqueada por usar o modelo gratuito FORA
 # da plataforma deles — e limite de termo de uso, nao de volume, entao rodar
 # menos nao resolve. Entra so se pedido a mao com --so, e sob risco conhecido.
-PADRAO = ["agy", "agy2", "agy3", "codex", "codex2", "claude", "claude2",
+PADRAO = ["agy", "agy2", "agy3", "codex", "codex2", "claude",
           "openrouter", "openrouter2", "openrouter3", "alibaba",
-          "commandcode", "deepseek"]
+          "commandcode", "commandcode2", "deepseek"]
 
 # Escrito pelo painel e lido aqui: quem entra no lote, com que modelo e que
 # effort. E so um padrao — qualquer flag na linha de comando ganha.
@@ -48,6 +67,14 @@ CONFIG = _caminho_config()
 
 # {provedor: (modelo, effort)} — vazio quer dizer "usa o padrao de llm.py".
 AJUSTES = {}
+
+# Ligado por --ferramentas: libera web/arquivo nos provedores de CLI.
+#
+# Global em vez de parametro, como o AJUSTES e o EVENTO, porque `pergunta_a` e
+# chamada de oito lugares (os quatro modos, o juiz, a votacao) e o valor nunca
+# varia dentro de uma rodada: enfiar o booleano em todas as assinaturas seria
+# muito mexe-mexe para carregar uma coisa que e do lote, nao da chamada.
+FERRAMENTAS = False
 
 # Gancho de acompanhamento ao vivo. Quem chama por CLI deixa None e nada muda;
 # o painel poe uma funcao aqui e recebe cada evento no instante em que acontece.
@@ -63,6 +90,7 @@ EVENTO = None
 
 
 def _ev(tipo, **dados):
+    registro.escreve(dict(dados, tipo=tipo))
     if EVENTO is None:
         return
     try:
@@ -96,6 +124,34 @@ def le_config():
         return None
 
 
+# Espera entre tentativas quando a falha e transitoria (lock do opencode,
+# 429/503). Erro de uso (modelo recusado, login) falha na hora: repetir so
+# atrasaria o lote. Agente com ferramenta nunca repete -- a primeira tentativa
+# pode ter escrito arquivo, e a segunda faria tudo de novo por cima.
+ESPERA_RETRY = (5, 20)
+
+
+def _com_retry(nome, modelo, chamada):
+    for espera in (*ESPERA_RETRY, None):
+        try:
+            return chamada()
+        except Parado:
+            raise
+        except BaseException as e:
+            classe = registro.classifica(str(e))
+            if espera is None or FERRAMENTAS or not registro.transitorio(classe):
+                raise
+            _ev("tentativa", nome=nome, modelo=modelo, classe=classe,
+                erro=str(e)[:300], espera=espera)
+            # Dorme em fatias: Parar no meio da espera nao pode abrir chamada nova.
+            fim = time.time() + espera
+            while True:
+                checa_parada()
+                if time.time() >= fim:
+                    break
+                time.sleep(min(1, fim - time.time()))
+
+
 def pergunta_a(nome, texto, imagens, effort):
     fn, modelo = PROVEDORES[nome]
     modelo, effort = AJUSTES.get(nome, (modelo, effort))
@@ -103,15 +159,17 @@ def pergunta_a(nome, texto, imagens, effort):
     _ev("inicio", nome=nome, modelo=modelo, effort=effort)
     t = time.time()
     try:
-        resposta = fn(texto, imagens, modelo, effort).strip()
+        resposta = _com_retry(nome, modelo, lambda: fn(texto, imagens, modelo, effort,
+                                                       FERRAMENTAS).strip())
         if not resposta:
             # Resposta vazia e falha, nao participacao. Sem esta linha o
             # provedor aparece no relatorio como se tivesse respondido, entra
             # no dossie da rodada seguinte como uma entrada em branco e some do
             # radar -- ninguem vai perguntar por que aquele modelo "nao opinou".
             # Visto em 15/09/2026 com opencode-go/glm-5.3-flash, que devolve
-            # string vazia sem erro nenhum. O lado das APIs ja declarava isso
-            # (ver `openai_compat`); aqui vale para TODO provedor, CLI incluso.
+            # string vazia sem erro nenhum. A checagem nasceu no lado das APIs
+            # cruas (que sairam em 19/09/2026, ver llm.py) e vale para TODO
+            # provedor -- hoje sao todos de CLI, e CLI tambem devolve vazio.
             raise SystemExit(f"resposta vazia de {modelo} (sem erro do provedor "
                              f"-- modelo devolveu nada)")
         seg = time.time() - t
@@ -123,7 +181,7 @@ def pergunta_a(nome, texto, imagens, effort):
         # SystemExit inclusive: um provedor fora do ar nao derruba o esquadrao.
         seg = time.time() - t
         _ev("resposta", nome=nome, modelo=modelo, texto=f"[FALHOU] {e}",
-            seg=seg, ok=False)
+            seg=seg, ok=False, classe=registro.classifica(str(e)))
         return nome, f"[FALHOU] {e}", seg
 
 
@@ -165,14 +223,14 @@ def dossie(respostas):
 PERFIS = os.path.join(os.path.expanduser("~"), ".claude", "perfis.json")
 
 ROTA_PADRAO = {
-    "codigo":     ["codex", "codex2", "openrouter2", "commandcode", "deepseek", "claude", "claude2"],
-    "frontend":   ["commandcode", "openrouter2", "codex", "codex2", "agy"],
+    "codigo":     ["codex", "codex2", "openrouter2", "commandcode", "commandcode2", "deepseek", "claude"],
+    "frontend":   ["commandcode", "commandcode2", "openrouter2", "codex", "codex2", "agy"],
     "visao":      ["agy", "agy2", "agy3", "alibaba", "opencode", "opencode2", "commandcode"],
-    "texto":      ["claude", "claude2", "openrouter3", "openrouter", "agy"],
-    "raciocinio": ["claude", "claude2", "agy", "agy2", "alibaba", "deepseek"],
+    "texto":      ["claude", "openrouter3", "openrouter", "agy"],
+    "raciocinio": ["claude", "agy", "agy2", "alibaba", "deepseek"],
     "dados":      ["alibaba", "openrouter", "deepseek", "agy"],
-    "pesquisa":   ["agy", "agy2", "agy3", "commandcode", "claude", "claude2"],
-    "geral":      ["agy", "agy2", "claude", "claude2", "openrouter2", "alibaba"],
+    "pesquisa":   ["agy", "agy2", "agy3", "commandcode", "commandcode2", "claude"],
+    "geral":      ["agy", "agy2", "claude", "openrouter2", "alibaba"],
 }
 
 DECOMPOR = (
@@ -195,8 +253,42 @@ DECOMPOR = (
     "\n\nOBJETIVO:\n")
 
 
+# 2026-09-29: ranking de MODELOS por especialidade, tirado de fonte publica
+# (Artificial Analysis + LMArena; ver docs/ESQUADRAO_ROTEAMENTO.md). A rota
+# de slots sai dele e do modelo/effort que cada slot tem no painel: trocar o
+# modelo no painel ja reordena a rota, sem editar lista de slot a mao.
+CAPACIDADES = os.path.join(os.path.expanduser("~"), ".claude", "esquadrao",
+                           "capacidades.json")
+NIVEIS = ("low", "medium", "high", "xhigh", "max")
+
+
+def _posicao(padroes, modelo, effort):
+    """Indice do primeiro 'modelo[@nivel]' que casa; sem casar, vai pro fim."""
+    modelo = (modelo or "").lower()
+    # O agy serve Claude e GPT-OSS com o effort no nome (claude-opus-5-5-medium)
+    # e ignora o do slot. Sem isto o agy3 em "high" herdava a nota do Opus high
+    # e ganhava as 8 especialidades com um Opus medium.
+    m = re.search(r"-(low|medium|high)$", modelo)
+    if m and not modelo.startswith("gemini-"):
+        effort = m.group(1)
+    ef = NIVEIS.index(effort) if effort in NIVEIS else 0
+    for i, p in enumerate(padroes):
+        nome, _, nivel = p.partition("@")
+        if nome in modelo and (not nivel or ef >= NIVEIS.index(nivel)):
+            return i
+    return len(padroes)
+
+
 def rota_final():
     rota = {e: list(s) for e, s in ROTA_PADRAO.items()}
+    try:
+        if os.path.exists(CAPACIDADES) and AJUSTES:
+            rank = json.load(open(CAPACIDADES, encoding="utf-8"))["ranking"]
+            for e, padroes in rank.items():
+                rota[e] = sorted(AJUSTES, key=lambda s: _posicao(
+                    padroes, AJUSTES[s][0], AJUSTES[s][1]))
+    except Exception as e:
+        diz(f"[aviso] {CAPACIDADES} ilegivel ({e}); usando rota padrao")
     try:
         if os.path.exists(PERFIS):
             for e, s in json.load(open(PERFIS, encoding="utf-8")).get("rota", {}).items():
@@ -226,12 +318,24 @@ def extrai_json(bruto):
     return plano
 
 
-def arquiteto(nomes, texto, imagens, effort, juiz):
-    """Decompoe pelo juiz -> roteia pela tabela -> ondas -> juiz consolida e revisa."""
+def arquiteto(nomes, texto, imagens, effort, juiz, n_rodadas=2):
+    """Decompoe pelo juiz -> roteia pela tabela -> ondas -> juiz consolida e revisa.
+
+    n_rodadas=1 para na consolidacao (uma rodada so); >=2 acrescenta a
+    revisao final do juiz."""
     from equipe import valida, niveis, executa
     import equipe as eq
     bruto = pergunta_a(juiz, DECOMPOR + texto, imagens, effort)[1]
     plano = extrai_json(bruto)
+    # Juiz que volta vazio ou sem JSON (gratis com fila faz isso) jogaria tudo
+    # numa etapa so, e ai ninguem faz o que sabe melhor. Tenta os dois canais
+    # ligados mais aptos em "geral" antes de desistir da divisao.
+    if plano is None:
+        for alt in [s for s in rota_final()["geral"] if s in nomes and s != juiz][:2]:
+            diz(f"[aviso] juiz {juiz} nao devolveu plano; dividindo com {alt}")
+            plano = extrai_json(pergunta_a(alt, DECOMPOR + texto, imagens, effort)[1])
+            if plano is not None:
+                break
     if plano is None:
         diz("[aviso] juiz nao devolveu JSON; tarefa unica em modo geral")
         plano = [{"id": "tudo", "tarefa": texto, "especialidade": "geral",
@@ -245,6 +349,12 @@ def arquiteto(nomes, texto, imagens, effort, juiz):
                              nomes[0])
         if not isinstance(t.get("tarefa"), str) or not t["tarefa"].strip():
             t["tarefa"] = texto
+        # O motor do equipe le a flag de CADA tarefa (equipe.executa), nao a
+        # global daqui. Sem esta linha, --ferramentas valeria so para as
+        # chamadas do juiz e as etapas rodariam cegas -- o pior dos dois mundos,
+        # porque o juiz consolidaria dados que ninguem foi buscar.
+        if FERRAMENTAS:
+            t["ferramentas"] = True
     # Id repetido do juiz quebraria o grafo de dependencia em silencio: renomeia
     # e leva o apontamento junto.
     vistos, mapa = set(), {}
@@ -296,6 +406,9 @@ def arquiteto(nomes, texto, imagens, effort, juiz):
 
     # O orquestrador tambem e o revisor final: audita a sintese contra o
     # objetivo e entrega a versao corrigida (ou a mesma, se estiver ok).
+    # Com uma rodada so, a consolidacao E a entrega: nao ha segunda passada.
+    if n_rodadas <= 1:
+        return
     rev = pergunta_a(juiz, (
         f"Voce e o revisor final. Objetivo original:\n{texto}\n\n"
         f"Resposta consolidada:\n{fin[1]}\n\n"
@@ -333,6 +446,7 @@ def consenso(nomes, texto, imagens, effort, juiz, max_rodadas):
     O criterio de parada e unanimidade de RATIFICO — nao um numero fixo de
     rodadas. Se sobrar objecao na ultima, isso e informacao, nao fracasso:
     quer dizer que o ponto e genuinamente disputado."""
+    max_rodadas = max(1, max_rodadas)
     sintese, objecoes = None, ""
     for rodada in range(1, max_rodadas + 1):
         if sintese is None:
@@ -371,13 +485,23 @@ def consenso(nomes, texto, imagens, effort, juiz, max_rodadas):
         f"disputado de verdade\n{'#' * 70}\n{sintese}\n\nEm aberto:\n{objecoes}")
 
 
+def todos(nomes, texto, imagens, effort, n_rodadas=1):
+    """Cada provedor responde sozinho, N vezes. Sem juiz e sem dossie: a
+    rodada 2 nao ve a 1, entao N>1 e reamostragem — o que muda entre as levas
+    e variancia do proprio modelo, nao refino."""
+    for rodada in range(1, max(1, n_rodadas) + 1):
+        rs = em_paralelo(nomes, texto, imagens, effort)
+        mostra(f"RODADA {rodada} — respostas independentes", rs)
+
+
 def refino(nomes, texto, imagens, effort, juiz, n_rodadas):
     """Independente -> (N-2) rodadas de critica cruzada -> consolidacao.
 
     n_rodadas conta a consolidacao como a ultima rodada (assim n_rodadas=3
     reproduz o comportamento antigo, fixo: r1 independente, r2 critica,
-    r3 consolidado). Minimo 2 (independente + consolidado, sem critica)."""
-    n_rodadas = max(2, n_rodadas)
+    r3 consolidado). Minimo 1: uma rodada so = independente + consolidado,
+    sem critica cruzada (1 e 2 dao o mesmo caminho)."""
+    n_rodadas = max(1, n_rodadas)
     respostas = em_paralelo(nomes, texto, imagens, effort)
     mostra("RODADA 1 — respostas independentes", respostas)
 
@@ -397,7 +521,74 @@ def refino(nomes, texto, imagens, effort, juiz, n_rodadas):
            [pergunta_a(juiz, p_final, imagens, effort)])
 
 
+def saude(nomes):
+    """Pinga cada slot com o modelo/effort do AJUSTES. Usa o mesmo pergunta_a
+    do lote (com retry e registro), entao login vencido, modelo que saiu do
+    catalogo e cota esgotada aparecem aqui antes de estragar um lote de verdade.
+    Devolve [(nome, ok, seg, classe)]."""
+    out = []
+    for n, resp, seg in em_paralelo(nomes, "Responda apenas a palavra OK.", [], "low"):
+        ok = not resp.startswith("[FALHOU]")
+        out.append((n, ok, seg, "" if ok else registro.classifica(resp)))
+    return out
+
+
+def _formacao(cfg, so=None, effort=None):
+    """Slots ativos do painel (ou --so) com modelo/effort no AJUSTES."""
+    provs = cfg.get("provedores", {})
+    if so:
+        nomes = [n.strip() for n in so.split(",") if n.strip()]
+    elif provs:
+        # Config existe mas nada ligado: recusa, como o main. Cair no PADRAO
+        # pingaria canais escondidos (codex, alibaba) que o usuario nao escolheu.
+        nomes = [n for n, c in provs.items() if c.get("ativo")]
+        if not nomes:
+            raise SystemExit(f"nenhum provedor ativo em {CONFIG}")
+    else:
+        nomes = list(PADRAO)
+    for n in nomes:
+        if n not in PROVEDORES:
+            raise SystemExit(f"provedor desconhecido: {n}")
+        c = provs.get(n, {})
+        AJUSTES[n] = (c.get("modelo") or PROVEDORES[n][1],
+                      effort or c.get("effort") or "low")
+    return nomes
+
+
+def _comando_extra():
+    """`esquadrao relatorio [--dias N]` e `esquadrao saude [--so a,b]`."""
+    if len(sys.argv) < 2 or sys.argv[1] not in ("relatorio", "saude"):
+        return False
+    p = argparse.ArgumentParser(prog=f"esquadrao {sys.argv[1]}")
+    if sys.argv[1] == "relatorio":
+        p.add_argument("--dias", type=int, default=7)
+        print(registro.relatorio(p.parse_args(sys.argv[2:]).dias))
+        return True
+    p.add_argument("--so", help="lista separada por virgula")
+    so = p.parse_args(sys.argv[2:]).so
+    cfg = le_config() or {}
+    nomes = _formacao(cfg, so)
+    juiz = cfg.get("juiz")
+    if not so and juiz in PROVEDORES and juiz not in nomes:
+        nomes += _formacao(cfg, juiz)
+    registro.abre("saude", nomes, juiz, "Responda apenas a palavra OK.", "cli")
+    status = "erro"
+    try:
+        res = saude(nomes)
+        status = "ok"
+    finally:
+        registro.fecha(status)
+    for n, ok, seg, classe in res:
+        print(f"{n:14}{AJUSTES[n][0][:42]:44}{AJUSTES[n][1]:7}"
+              f"{'OK' if ok else 'FALHOU ' + classe:16}{seg:5.0f}s")
+    falhas = sum(1 for r in res if not r[1])
+    print(f"\n{len(res) - falhas}/{len(res)} respondendo")
+    sys.exit(1 if falhas else 0)
+
+
 def main():
+    if _comando_extra():
+        return
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("pergunta", nargs="?", help="ou por stdin")
@@ -408,10 +599,16 @@ def main():
     p.add_argument("--modo",
                    choices=["todos", "refino", "consenso", "arquiteto"],
                    default=None)
+    p.add_argument("-f", "--ferramentas", action="store_true",
+                   help="libera web/arquivo nos provedores de CLI (os de API "
+                        "crua ignoram)")
     p.add_argument("--juiz", default=None, help="quem consolida")
     p.add_argument("--rodadas", type=int, default=None,
-                   help="refino: total de rodadas (min 2). consenso: teto "
-                        "(padrao 4)")
+                   help="1 em qualquer modo = uma rodada so. todos: quantas "
+                        "levas independentes. refino: total "
+                        "de rodadas (1 ou 2 = sem critica cruzada). "
+                        "consenso: teto. arquiteto: 1 para sem revisao "
+                        "final. (padrao 4)")
     a = p.parse_args()
 
     cfg = le_config() or {}
@@ -444,29 +641,48 @@ def main():
     if not nomes:
         raise SystemExit(f"nenhum provedor ativo em {CONFIG}")
 
+    if a.ferramentas:
+        globals()["FERRAMENTAS"] = True
+        fora = [n for n in dict.fromkeys(nomes + [a.juiz])
+                if base(n) not in FERRAMENTAS_OK]
+        if fora:
+            diz(f"[aviso] sem ferramenta (API crua, responde do treino): "
+                f"{', '.join(fora)}")
+        if a.juiz in fora:
+            diz(f"[aviso] o JUIZ ({a.juiz}) e um desses: ele consolida sem "
+                f"poder verificar nada. Considere --juiz agy|claude|codex.")
+
     # -e da linha de comando ganha do painel; sem ele, cada um usa o seu.
     for n in nomes:
         c = provs.get(n, {})
         AJUSTES[n] = (c.get("modelo") or PROVEDORES[n][1],
                       a.effort or c.get("effort") or "low")
+    # Juiz fora do lote usa o modelo/effort que o painel deu ao slot dele; antes
+    # caia no padrao do llm.py (sonnet) e o juiz escolhido nao era o que rodava.
     if a.juiz not in AJUSTES:
-        AJUSTES[a.juiz] = (PROVEDORES[a.juiz][1], a.effort or "low")
+        cj = provs.get(a.juiz, {})
+        AJUSTES[a.juiz] = (cj.get("modelo") or PROVEDORES[a.juiz][1],
+                           a.effort or cj.get("effort") or "low")
     if cfg:
         diz("config: " + ", ".join(f"{n}({AJUSTES[n][1]})" for n in nomes)
             + f"  modo={a.modo}")
 
-    if a.modo == "consenso":
-        return consenso(nomes, texto, a.imagem, a.effort, a.juiz, a.rodadas)
-
-    if a.modo == "arquiteto":
-        return arquiteto(nomes, texto, a.imagem, a.effort, a.juiz)
-
-    if a.modo == "todos":
-        r1 = em_paralelo(nomes, texto, a.imagem, a.effort)
-        mostra("RODADA 1 — respostas independentes", r1)
-        return
-
-    return refino(nomes, texto, a.imagem, a.effort, a.juiz, a.rodadas)
+    rid = registro.abre(a.modo, nomes, a.juiz, texto, "cli")
+    status = "erro"
+    try:
+        if a.modo == "consenso":
+            r = consenso(nomes, texto, a.imagem, a.effort, a.juiz, a.rodadas)
+        elif a.modo == "arquiteto":
+            r = arquiteto(nomes, texto, a.imagem, a.effort, a.juiz, a.rodadas)
+        elif a.modo == "todos":
+            r = todos(nomes, texto, a.imagem, a.effort, a.rodadas)
+        else:
+            r = refino(nomes, texto, a.imagem, a.effort, a.juiz, a.rodadas)
+        status = "ok"
+        return r
+    finally:
+        registro.fecha(status)
+        diz(f"[registro] {rid}")
 
 
 if __name__ == "__main__":

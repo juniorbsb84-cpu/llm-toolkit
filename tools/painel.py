@@ -1,47 +1,70 @@
 #!/usr/bin/env python
 """Painel do esquadrao: escolhe provedores e effort no navegador.
 
-  python tools/painel.py        (abre http://127.0.0.1:8777)
+  python ~/.claude/tools/painel.py        (abre http://127.0.0.1:8777)
 
 Salvar grava ~/.claude/esquadrao.json, que o esquadrao.py le como padrao e o
 Claude le para saber a configuracao vigente. So isso: a pagina nao dispara
 nada, so escreve a config.
+
+Este arquivo e lido UMA VEZ, quando o processo sobe: editar aqui nao muda a
+pagina de quem ja esta no ar, e recarregar a aba nao resolve. Use
+`painel --reinicia` (ou deixe o hook PostToolUse do settings.json fazer isso
+sozinho -- ver hooks/reinicia-painel.py).
 """
-import http.server, json, os, queue, socketserver, sys, threading, time, webbrowser
+import http.server, json, os, re, queue, socketserver, sys, threading, time, webbrowser
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from llm import PROVEDORES, base  # noqa: E402
+from llm import PROVEDORES, SLOT_FIXO, base  # noqa: E402
+import llm  # noqa: E402
+import registro  # noqa: E402
 from esquadrao import PADRAO, CONFIG  # noqa: E402
 import esquadrao as esq  # noqa: E402
 import modelos as cat  # noqa: E402
 
 PORTA = 8777
-EFFORTS = ["low", "medium", "high", "xhigh"]
+EFFORTS = ["low", "medium", "high", "xhigh", "max"]
 
 # Quem aceita "xhigh" de fato — cada um testado a mao em 12/09/2026 mandando um
 # valor invalido e lendo a recusa, e depois uma chamada real no xhigh:
 #   codex      erro lista 'high', 'xhigh', 'max'
-#   openrouter erro lista max|xhigh|high|medium|low|minimal|none
 #   commandcode erro diz "Supported: low, medium, high, xhigh"
-#   deepseek/alibaba  "banana" da 400 com o enum; xhigh responde normalmente
-# Fora: agy (a flag --effort so conhece low|medium|high) e opencode (a CLI
-# engole qualquer --variant calada, entao nao da para provar que honra).
-XHIGH = ["codex", "commandcode", "openrouter", "alibaba", "claude"]
-# (o deepseek saiu em 16/09/2026: o servidor mapeia xhigh para high, e o
-#  via_deepseek passou a reancorar — oferecer o degrau seria mentira do painel)
-# (o claude entrou em 13/09/2026: `claude --help` lista low|medium|high|xhigh|max
-#  e um valor invalido so vira Warning no stderr, nunca erro — ver via_claude)
+#   claude     `claude --help` lista low|medium|high|xhigh|max; valor invalido
+#              so vira Warning no stderr, nunca erro (entrou em 13/09/2026)
+# Fora fica quem nao da para PROVAR que honra o degrau -- oferecer no painel um
+# esforco que o outro lado engole calado e mentir para quem escolhe:
+#   agy       depende do modelo, nao do provedor: em 20/11/2026 so o Gemini 4
+#             Neon e o Hydrogen aceitam xhigh (o Argon para no high). A pagina
+#             decide pelo modelo escolhido (XHIGH_AGY la).
+#   opencode  a CLI aceita qualquer --variant calada (testei "banana", rc=0)
+#   openrouter/alibaba/deepseek  sairam em 19/09/2026 ao trocarem de API crua
+#             para via_opencode: a chamada real que provava o xhigh no HTTP
+#             direto ("banana" dava 400 com o enum) nao vale mais, porque quem
+#             recebe o effort agora e o mesmo --variant do opencode acima.
+#             (o deepseek ja tinha saido em 16/09/2026, por outra razao: o
+#              servidor dele mapeava xhigh para high internamente.)
+XHIGH = ["codex", "commandcode", "claude"]
+# "max": so quem lista o degrau na propria CLI (`claude --help`, erro do codex).
+MAX = ["codex", "claude"]
+
+# Provedores sem assinatura (12/11/2026): somem do painel e nunca ficam ativos.
+# O llm.py continua sabendo chama-los; voltar = tirar daqui.
+FORA_DO_PAINEL = {"codex", "alibaba", "deepseek"}
 
 # CLI = chamada por subprocesso de um cliente instalado; API = HTTP direto.
+# Desde 19/09/2026 sao todos CLI: openrouter, alibaba e deepseek passaram a
+# chamar o agente do opencode (ver llm.py) e nao existe mais HTTP direto no
+# esquadrao. A categoria "API" fica documentada aqui para o dia em que entrar
+# um provedor sem cliente instalado.
 TIPO = {"agy": "CLI", "codex": "CLI", "commandcode": "CLI", "opencode": "CLI",
-        "claude": "CLI",
-        "openrouter": "API", "alibaba": "API", "deepseek": "API"}
+        "claude": "CLI", "openrouter": "CLI", "alibaba": "CLI",
+        "deepseek": "CLI"}
 
 
 # O que o llm.py faz de fato com o effort de cada provedor:
 #   sempre — vira flag/campo na chamada: codex e commandcode (--effort),
-#            opencode (--variant), openrouter/deepseek (reasoning_effort),
+#            opencode/openrouter (--variant), deepseek (reasoning_effort),
 #            alibaba (enable_thinking + reasoning_effort)
 #   gemini — vai na flag --effort e so a familia gemini- aceita (agy);
 #            claude-* e gpt-oss-* ja trazem o modo no nome
@@ -73,6 +96,130 @@ def catalogo():
     return {n: lidos.get(base(n), [PROVEDORES[n][1]]) for n in PROVEDORES}
 
 
+def notas():
+    """Nota geral e custo por tarefa (Artificial Analysis) de cada modelo que o
+    painel oferece, para a linha mostrar o que a escolha rende e quanto gasta.
+    Vem do ultimo JSON que tools/tabela_llm.py salvou; sem ele, lista vazia e a
+    linha diz "sem medicao". Entrada: [bases, nome, effort, nota, custo]."""
+    try:
+        import tabela_llm as tb
+        salvos = sorted(x for x in os.listdir(tb.FONTES) if x.startswith("aa_modelos_"))
+        aa = {m["slug"]: m for m in json.load(open(
+            os.path.join(tb.FONTES, salvos[-1]), encoding="utf-8"))["modelos"]}
+    except Exception:
+        return []
+    out = []
+    for slug, (onde, _paga, effort) in tb.ACESSO.items():
+        m = aa.get(slug)
+        if not m or m.get("intelligenceIndex") is None:
+            continue
+        bases, _, nome = onde.partition(" · ")
+        custo = m.get("intelligenceIndexCostPerTask")
+        out.append([bases.split("/"), nome.split(" ")[0], effort,
+                    round(m["intelligenceIndex"]),
+                    round(custo, 2) if isinstance(custo, (int, float)) else None])
+    return out
+
+
+def rota_previa(provs, cap=None):
+    """Para onde o modo arquiteto manda cada especialidade com estes canais
+    ligados: os 3 primeiros e a nota de cada um. Usa o mesmo _posicao do
+    esquadrao.py, para a previa nunca divergir da rota real."""
+    if cap is None:
+        try:
+            cap = json.load(open(esq.CAPACIDADES, encoding="utf-8"))
+        except Exception:
+            return {}
+    ativos = {n: (c.get("modelo") or "", c.get("effort") or "low")
+              for n, c in provs.items() if c.get("ativo")}
+    out = {}
+    for e, padroes in cap.get("ranking", {}).items():
+        notas = cap.get("notas", {}).get(e, [])
+        pos = {n: esq._posicao(padroes, *ativos[n]) for n in ativos}
+        ordem = sorted(ativos, key=lambda n: pos[n])[:3]
+        out[e] = [[n, notas[pos[n]][1] if pos[n] < len(notas) else None] for n in ordem]
+    return out
+
+
+# --- modo gratis ----------------------------------------------------------
+# Quem conta como gratis: conta Google (agy, qualquer modelo), os "-free" da
+# Zen, os ":free" da OpenRouter e o space-bunny do commandcode (unico gratis que
+# a trava de cota do llm.py deixa passar).
+def _gratis_candidatos():
+    cat_ = catalogo()
+    out = [("agy", m) for m in cat_.get("agy", [])]
+    out += [("opencode", m) for m in cat_.get("opencode", []) if m.endswith("-free")]
+    out += [("openrouter", m) for m in cat_.get("openrouter", []) if m.endswith(":free")]
+    if "stealth/space-bunny-alpha" in (cat.le() or {}).get("gratis", []):
+        out.append(("commandcode", "stealth/space-bunny-alpha"))
+    return out
+
+
+def gratis():
+    """Liga so modelos gratis que respondem AGORA e monta o lote no modo
+    arquiteto: o juiz divide a tarefa e a rota de capacidades.json manda cada
+    etapa para o gratis mais apto. Se houver menos gratis que etapas, o mesmo
+    canal pega mais de uma -- e o que a rota ja faz sozinha.
+
+    Nao salva nada: devolve a configuracao para a pagina aplicar na tela."""
+    from concurrent.futures import ThreadPoolExecutor, wait
+    cands = _gratis_candidatos()
+    nota = {}
+    for bases, nome, _e, n, _c in notas():
+        for b in bases:
+            nota[(b, nome)] = max(n, nota.get((b, nome), 0))
+    def pontua(b, m):
+        return max([v for (bb, nm), v in nota.items() if bb == b and nm in m] or [0])
+
+    def ping(bm):
+        b, m = bm
+        t = time.time()
+        try:
+            r = PROVEDORES[b][0]("Responda apenas a palavra OK.", [], m, "low", False)
+            return "ok" in r.lower(), time.time() - t
+        except BaseException:
+            return False, time.time() - t
+    ex = ThreadPoolExecutor(max_workers=max(1, len(cands)))
+    futs = {ex.submit(ping, c): c for c in cands}
+    # Gratis que nao responde em 90 s esta com fila: para o lote, nao serve.
+    feitos, pendentes = wait(futs, timeout=90)
+    if pendentes:
+        llm.mata_vivos()
+    ex.shutdown(wait=False, cancel_futures=True)
+    relato, vivos = [], []
+    for f, (b, m) in futs.items():
+        ok, seg = f.result() if f in feitos else (False, 90.0)
+        relato.append({"provedor": b, "modelo": m, "ok": ok, "seg": round(seg)})
+        if ok:
+            vivos.append((pontua(b, m), b, m))
+    vivos.sort(reverse=True)
+    # Distribui nos slots de cada provedor (agy, agy2, agy3...), melhores primeiro.
+    livres = {b: [n for n in sorted(PROVEDORES, key=lambda x: (len(x), x)) if base(n) == b]
+              for b in {c[0] for c in cands}}
+    provs = {n: {"ativo": False, "modelo": c.get("modelo", ""), "effort": c.get("effort", "low")}
+             for n, c in config_atual()["provedores"].items()}
+    usados, familias = [], set()
+    for _n, b, m in vivos:
+        # Versao velha da mesma familia (gemini-3.7-flash atras do 3.8) nunca
+        # ganha rota -- a rota pega o primeiro apto --, e ocuparia o slot de um
+        # modelo diferente que ganharia (o Opus 4.6 do agy, por exemplo).
+        fam = (b, re.sub(r"[\d.]+", "", m))
+        if fam in familias:
+            continue
+        familias.add(fam)
+        if livres.get(b):
+            slot = livres[b].pop(0)
+            # Gratis nao cobra esforco: sempre high (flash em low rende pouco).
+            provs[slot] = {"ativo": True, "modelo": m, "effort": "high"}
+            usados.append(slot)
+    # Juiz: o melhor do agy (conta Google, sem fila). Medido em 29/09/2026: o
+    # Spark gratis, de nota maior, voltou vazio duas vezes seguidas justo na
+    # divisao da tarefa -- juiz que falha trava o lote inteiro.
+    do_agy = [u for u in usados if base(u) == "agy"]
+    juiz = (do_agy or usados or ["agy"])[0]
+    return {"provedores": provs, "modo": "arquiteto", "juiz": juiz, "relato": relato}
+
+
 def quando():
     d = cat.le()
     return d["atualizado_em"] if d else "nunca"
@@ -87,6 +234,9 @@ def config_atual():
             # llm.py — e o clone nasce com o modelo do pai.
             provs = cfg.setdefault("provedores", {})
             for n in PROVEDORES:
+                if n in SLOT_FIXO and n not in provs:
+                    provs[n] = {"ativo": False, "modelo": SLOT_FIXO[n][0],
+                                "effort": SLOT_FIXO[n][1]}
                 if n not in provs:
                     pai = provs.get(base(n), {})
                     provs[n] = {"ativo": False,
@@ -149,25 +299,30 @@ def _roda_lote(t, pedido):
                            provs[n].get("effort") or "low")
                        for n in nomes}
         if juiz not in esq.AJUSTES:
-            esq.AJUSTES[juiz] = (PROVEDORES[juiz][1], "low")
+            cj = provs.get(juiz, {})
+            esq.AJUSTES[juiz] = (cj.get("modelo") or PROVEDORES[juiz][1],
+                                 cj.get("effort") or "low")
         _empurra(t, {"tipo": "comecou", "nomes": nomes, "modo": modo,
                      "juiz": juiz})
-        rodadas = int(pedido.get("rodadas") or 3)
+        registro.abre(modo, nomes, juiz, pedido["pergunta"], "painel")
+        rodadas = max(1, int(pedido.get("rodadas") or 3))
         texto = pedido["pergunta"]
         if modo == "consenso":
             esq.consenso(nomes, texto, [], None, juiz, rodadas)
         elif modo == "arquiteto":
-            esq.arquiteto(nomes, texto, [], None, juiz)
+            esq.arquiteto(nomes, texto, [], None, juiz, rodadas)
         elif modo == "refino":
             esq.refino(nomes, texto, [], None, juiz, rodadas)
         else:
-            esq.mostra("RODADA 1 - respostas independentes",
-                       esq.em_paralelo(nomes, texto, [], None))
+            esq.todos(nomes, texto, [], None, rodadas)
         _empurra(t, {"tipo": "fim"})
+        registro.fecha("ok")
     except esq.Parado:
         _empurra(t, {"tipo": "fim", "parado": True})
+        registro.fecha("parado")
     except BaseException as e:
         _empurra(t, {"tipo": "fim", "erro": str(e)[:400]})
+        registro.fecha("erro", erro=str(e)[:400])
     finally:
         t["vivo"] = False
         t["fila"].put(None)              # sentinela: fecha o SSE deste lote
@@ -241,14 +396,18 @@ class H(http.server.BaseHTTPRequestHandler):
         html = (open(PAGINA, encoding="utf-8").read().replace("__EFFORTS__", json.dumps(EFFORTS))
                 .replace("__XHIGH__", json.dumps(
                           [n for n in PROVEDORES if base(n) in XHIGH]))
+                .replace("__MAX__", json.dumps([n for n in PROVEDORES if base(n) in MAX]))
                       .replace("__CONFIG__", json.dumps(config_atual()))
-                      .replace("__NOMES__", json.dumps(sorted(PROVEDORES)))
+                      .replace("__NOMES__", json.dumps(sorted(n for n in PROVEDORES
+                                                         if base(n) not in FORA_DO_PAINEL)))
                       .replace("__MODELOS__", json.dumps(catalogo()))
+                      .replace("__GRATIS__", json.dumps((cat.le() or {}).get("gratis", [])))
                       .replace("__QUANDO__", json.dumps(quando()))
                       .replace("__RODANDO__", json.dumps(
                           bool(TRABALHO and TRABALHO.get("vivo"))))
                       .replace("__TIPO__", json.dumps(por_base(TIPO)))
-                      .replace("__EFEITO__", json.dumps(por_base(EFEITO))))
+                      .replace("__EFEITO__", json.dumps(por_base(EFEITO)))
+                      .replace("__NOTAS__", json.dumps(notas())))
         self._send(html)
 
     def do_POST(self):
@@ -363,10 +522,22 @@ class H(http.server.BaseHTTPRequestHandler):
                   f"provedores")
             self._send(json.dumps({"id": ident}), "application/json")
             return
+        if self.path == "/rota":
+            pedido = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            self._send(json.dumps(rota_previa(pedido.get("provedores") or {})),
+                       "application/json")
+            return
+        if self.path == "/gratis":
+            if TRABALHO is not None and TRABALHO.get("vivo"):
+                self.send_error(409, "ha um lote em andamento"); return
+            self._send(json.dumps(gratis()), "application/json")
+            return
         if self.path == "/parar":
             t = TRABALHO
             if t is not None:
                 t["parar"] = True
+                # Sem timeout, um CLI pendurado so sai daqui: mata as arvores vivas.
+                llm.mata_vivos()
             self._send("{}", "application/json")
             return
         if self.path == "/modelos":

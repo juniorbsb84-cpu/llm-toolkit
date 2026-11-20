@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """Executa um plano: cada tarefa vai para um provedor, respeitando dependencias.
 
-  python tools/equipe.py plano.json
-  python tools/equipe.py plano.json --saida C:/tmp/rodada1
+  python ~/.claude/tools/equipe.py plano.json
+  python ~/.claude/tools/equipe.py plano.json --saida C:/tmp/rodada1
 
 Quem PENSA o plano e o Claude (o orquestrador da sessao). Quem EXECUTA sao os
 provedores do llm.py. Esta ferramenta e so o motor: nao decide nada, so respeita

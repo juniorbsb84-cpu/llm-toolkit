@@ -1,23 +1,36 @@
 #!/usr/bin/env python
 """Uma pergunta, qualquer provedor, de qualquer projeto.
 
-  python tools/llm.py codex "pergunta"
-  python tools/llm.py openrouter -i foto.png "o que tem aqui?"
-  echo "pergunta longa" | python tools/llm.py agy
+  python ~/.claude/tools/llm.py codex "pergunta"
+  python ~/.claude/tools/llm.py openrouter -i foto.png "o que tem aqui?"
+  echo "pergunta longa" | python ~/.claude/tools/llm.py agy
+  python ~/.claude/tools/llm.py agy -f "resuma https://exemplo.com/pagina"
+
+-f / --ferramentas liga web e arquivo. Sem ela o provedor responde so do treino
+-- e, pior, sem avisar: modelo sem web nao devolve "nao sei", ele preenche.
+So os de CLI tem ferramenta (FERRAMENTAS_OK, no fim); os de API crua aceitam o
+parametro para a assinatura ficar uniforme e o ignoram, com aviso no stdout.
 
 Provedores: agy (+2,+3), codex (+2), claude (+2), opencode (+2), commandcode,
 openrouter (+2,+3), alibaba, deepseek. Os slots numerados dividem gateway e
 sessao com o slot base -- muda so o modelo escolhido (ver CLONES, no fim).
-Os de CLI usam sessao ja logada; openrouter, alibaba e deepseek leem a chave
-do arquivo apontado por LLM_APIS (nunca impressa).
+Todos usam sessao ja logada; nenhum le mais LLM_APIS (ver nota abaixo).
+
+openrouter, alibaba e deepseek NAO sao mais API crua (mudou em 19/09/2026):
+os tres chamam o agente do opencode com o modelo prefixado pelo namespace
+certo ("openrouter/", "alibaba-token-plan/", "deepseek/"), porque o gateway
+dele ja tem as tres contas como credencial propria (`opencode providers
+list`). Mesma conta, mesmo catalogo de cada um, mas com ferramenta de verdade
+em vez de so completar texto. O opencode virou o motor de todo provedor sem
+CLI dedicado; so ficam de fora os que ja tem CLI propria (codex, claude,
+commandcode) e o proprio opencode.
 
 O provedor "gemini" (CLI por API key) foi removido em 10/09/2026: a mesma
 familia de modelos vem pelo agy, na assinatura, sem a cota que estourava.
 
 Ver ~/.claude/docs/PROVEDORES_LLM.md para o porque de cada detalhe.
 """
-import argparse, base64, io, json, mimetypes, os, re, shutil, subprocess, sys
-import urllib.error, urllib.request
+import argparse, io, json, os, re, shutil, subprocess, sys
 
 SEM_JANELA = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 # Onde moram as chaves de API: a variavel de ambiente LLM_APIS, ou
@@ -46,12 +59,6 @@ def chave(padrao, prefixo=None):
     if not m:
         raise SystemExit(f"chave nao encontrada em {APIS}")
     return m.group(0)
-
-
-def data_url(caminho):
-    tipo = mimetypes.guess_type(caminho)[0] or "image/png"
-    b64 = base64.b64encode(open(caminho, "rb").read()).decode()
-    return f"data:{tipo};base64,{b64}"
 
 
 # Frases que um CLI imprime no STDOUT, com codigo de saida ZERO, quando na
@@ -88,10 +95,88 @@ def limpa_ansi(t):
     return re.sub(r"\[[0-9;]*m", "", t)
 
 
-def roda(cmd, entrada=None, timeout=900):
-    r = subprocess.run(cmd, input=entrada, capture_output=True, text=True,
-                       encoding="utf-8", errors="replace", timeout=timeout,
-                       creationflags=SEM_JANELA)
+# 2026-09-24: 900/1200s cortava tarefa de agente (-f) no meio da escrita e
+# deixava arquivo pela metade (senac.py perdeu o parse). Depois o teto fixo de 1h
+# matou o Qwen trabalhando (rodada 2 dos prototipos). Com -f o corte e por
+# OCIOSIDADE: 20 min sem arquivo criado/alterado no diretorio de trabalho.
+TETO_AGENTE = None
+OCIOSO_AGENTE = 20 * 60
+TETO_DURO_AGENTE = 6 * 3600
+
+
+def _ultima_escrita(raiz, limite=20000):
+    mais, vistos = 0.0, 0
+    for d, subs, arqs in os.walk(raiz):
+        subs[:] = [s for s in subs if s not in (".git", "node_modules", "__pycache__", ".pytest_cache")]
+        for a in arqs:
+            vistos += 1
+            try:
+                mais = max(mais, os.path.getmtime(os.path.join(d, a)))
+            except OSError:
+                pass
+            if vistos >= limite:
+                return mais
+    return mais
+
+
+def _roda_agente(cmd, entrada):
+    import threading, time
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE if entrada is not None else None,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                         encoding="utf-8", errors="replace", creationflags=SEM_JANELA)
+    VIVOS.add(p)
+    saida = {}
+    t = threading.Thread(target=lambda: saida.update(zip(("out", "err"), p.communicate(entrada))), daemon=True)
+    t.start()
+    inicio = ultimo = time.time()
+    raiz = os.getcwd()
+    while t.is_alive():
+        t.join(30)
+        agora = time.time()
+        ultimo = max(ultimo, _ultima_escrita(raiz))
+        if t.is_alive() and (agora - ultimo > OCIOSO_AGENTE or agora - inicio > TETO_DURO_AGENTE):
+            # o .CMD do npm e so o cmd.exe: sem /T o node filho continua vivo
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)], capture_output=True, creationflags=SEM_JANELA)
+            t.join(10)
+            motivo = "sem escrever arquivo" if agora - ultimo > OCIOSO_AGENTE else "teto de 6 h"
+            VIVOS.discard(p)
+            raise SystemExit(f"agente cortado: {int((agora - ultimo) // 60)} min {motivo} (total {int((agora - inicio) // 60)} min)")
+    VIVOS.discard(p)
+    return subprocess.CompletedProcess(cmd, p.returncode, saida.get("out", ""), saida.get("err", ""))
+
+
+# 2026-09-29, pedido do usuario: sem timeout no esquadrao. O teto fixo de
+# 900/1200s cortava resposta longa de modelo com effort alto e aparecia como
+# [FALHOU] -- o esquadrao nunca ligava TETO_AGENTE, entao caia sempre aqui.
+# Agora so resta o teto de seguranca de 6 h; quem para um lote e o botao Parar
+# do painel, que mata as arvores vivas por mata_vivos().
+VIVOS = set()
+
+
+def mata_vivos():
+    for p in list(VIVOS):
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)],
+                       capture_output=True, creationflags=SEM_JANELA)
+
+
+def _roda_simples(cmd, entrada):
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE if entrada is not None else None,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                         encoding="utf-8", errors="replace", creationflags=SEM_JANELA)
+    VIVOS.add(p)
+    try:
+        out, err = p.communicate(entrada, timeout=TETO_DURO_AGENTE)
+    except subprocess.TimeoutExpired:
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)],
+                       capture_output=True, creationflags=SEM_JANELA)
+        raise SystemExit("cortado pelo teto de seguranca de 6 h")
+    finally:
+        VIVOS.discard(p)
+    return subprocess.CompletedProcess(cmd, p.returncode, out, err)
+
+
+def roda(cmd, entrada=None):
+    r = _roda_agente(cmd, entrada) if TETO_AGENTE else _roda_simples(cmd, entrada)
     if r.returncode and not r.stdout.strip():
         # Junta stderr e stdout: o opencode manda o banner por um e a causa pelo
         # outro, entao olhar so um deles devolve "[0m" como diagnostico. As
@@ -144,18 +229,6 @@ def le_stdin():
         return b.decode("cp1252", errors="replace")
 
 
-def sem_surrogates(t):
-    """Tira surrogate solto de uma string antes de ela virar JSON.
-
-    Cinto e suspensorio do `le_stdin`: o texto tambem chega de saida de
-    subprocesso (o dossie das rodadas do esquadrao e feito das respostas dos
-    outros), e um unico surrogate perdido no meio derruba a chamada inteira com
-    um erro que parece do provedor. Substitui pelo caractere de substituicao,
-    que atravessa JSON sem reclamacao.
-    """
-    return "".join("�" if 0xD800 <= ord(c) <= 0xDFFF else c for c in t)
-
-
 # Teto de caracteres que ainda vale mandar no argv de um CLI.
 #
 # Nao e estimativa: os wrappers `.CMD` do npm (claude, opencode, codex,
@@ -175,22 +248,6 @@ LIMITE_ARGV = 6000
 # numeros: acima deste tamanho todo mundo ja vai por stdin de qualquer jeito.
 LIMITE_CMD_EXE = 8191
 
-# Espera maxima por uma resposta de API.
-#
-# Eram 300s, e isso derrubava o alibaba DUAS VEZES na mesma consulta (rodadas 1
-# e 2 de 15/09/2026, "The read operation timed out" em 301s). Nao era rede ruim:
-# com `enable_thinking` e effort alto, num prompt de dezenas de milhares de
-# caracteres, o modelo passa minutos raciocinando antes do primeiro byte. Os
-# CLIs daqui ja usam 900-1200s justamente por isso; a API estava com um teto
-# apertado demais para o mesmo trabalho.
-TIMEOUT_API = 900
-
-# Orcamento de saida das APIs, em tokens. Inclui o raciocinio nos modelos que
-# pensam, entao precisa caber PENSAR e ESCREVER -- ver o comentario em
-# `openai_compat`, onde 4.000 truncou respostas no meio.
-MAX_TOKENS = 16000
-
-
 def cabe_no_argv(cmd, pergunta):
     """A pergunta cabe na linha de comando DEPOIS de escapada?
 
@@ -205,6 +262,10 @@ def cabe_no_argv(cmd, pergunta):
     entao aqui nao ha estimativa: e o comando que seria enviado.
     """
     if len(pergunta) > LIMITE_ARGV:
+        return False
+    # 2026-09-24: aspas + < > | & ^ % no argv passam pelo cmd.exe dos wrappers .CMD e viram
+    # redirecionamento ("O sistema nao pode encontrar o caminho"). Com esses caracteres, stdin.
+    if any(c in pergunta for c in '<>|&^%'):
         return False
     return len(subprocess.list2cmdline(list(cmd) + [pergunta])) <= LIMITE_CMD_EXE
 
@@ -237,6 +298,25 @@ def via_codex(pergunta, imagens, modelo, effort, ferramentas=False):
     # e vai ler do stdin vazio.
     cmd = [bin_de("codex"), "exec", "-m", modelo,
            "-c", f"model_reasoning_effort={effort}", "--skip-git-repo-check"]
+    # Ate 19/09/2026 este wrapper ACEITAVA ferramentas e ignorava: o codex exec
+    # roda sem rede e sem web, as buscas voltam vazias e ele responde do treino
+    # com cara de quem consultou. workspace-write + network_access e a rota sem
+    # desligar o sandbox.
+    #
+    # Ressalva medida em 19/09/2026 nesta maquina: mesmo assim o `web_search` do
+    # codex voltou resultado VAZIO (as features web dele estao deprecated) e o
+    # exec sandboxado falhou no Windows (CreateProcess/orchestrator_helper). Ou
+    # seja: o codex e o CLI mais fraco para web aqui. Prefira agy/claude/
+    # commandcode quando a tarefa depende de internet.
+    if ferramentas:
+        # 20/09/2026: o codex passou a REJEITAR -s junto com --approve-for-me
+        # ("the argument '--sandbox' cannot be used with '--approve-for-me'").
+        # E redundante mesmo: o --approve-for-me ja roda sob workspace-write.
+        # Passar os dois derrubava o provedor com [FALHOU] em 0s — inclusive
+        # quando ele era o JUIZ do esquadrao, que entao nao consolidava nada.
+        cmd += ["-c", "tools.web_search=true",
+                "-c", "sandbox_workspace_write.network_access=true",
+                "--approve-for-me"]
     for x in imagens:
         cmd += ["-i", os.path.abspath(x)]
     # No argv o prompt chega CORTADO na primeira quebra de linha, e tambem se
@@ -256,28 +336,43 @@ def via_agy(pergunta, imagens, modelo, effort, ferramentas=False):
     verificado em 12/09/2026 que nome-base + --effort responde, e que um valor
     invalido e recusado ("valid: low, medium, high"). So a familia gemini- a
     aceita; claude-* e gpt-oss-* ja trazem o modo no proprio nome."""
-    # O menu do agy para no high: xhigh/max vindos do painel ou de -e sao
-    # reancorados no teto em vez de quebrar a chamada.
-    if effort in ("xhigh", "max"):
-        effort = "high"
     if modelo.startswith("gemini-"):
         # Config antiga podia ter gravado o sufixo no nome (gemini-3.8-flash-medium).
         # Normaliza para a base — o effort agora anda por fora.
-        modelo = re.sub(r"-(low|medium|high)$", "", modelo)
-    cmd = [bin_de("agy"), "--model", modelo]
-    if effort and modelo.startswith("gemini-"):
-        cmd += ["--effort", effort]
-    # Sem isto o agy trava esperando aprovacao de cada ferramenta e devolve
-    # resposta VAZIA no modo -p, sem dizer que travou. So ligar quando a tarefa
-    # realmente precisa de web/arquivo: auto-aprova tudo, inclusive shell.
-    if ferramentas:
-        cmd.append("--dangerously-skip-permissions")
+        modelo = re.sub(r"-(low|medium|high|xhigh)$", "", modelo)
+    # max nao existe no agy; xhigh so em parte dos gemini (Hydrogen e Neon em
+    # 20/11/2026). Em vez de lista escrita a mao, tenta xhigh e, na recusa
+    # explicita ('has no "xhigh" effort'), repete em high.
+    if effort == "max":
+        effort = "xhigh"
+    # Orchestrator (planeja num modelo, executa em outro) recusa --effort.
+    if not modelo.startswith("gemini-") or "orchestrator" in modelo:
+        effort = None
     for x in imagens:
-        cmd += ["--add-dir", os.path.dirname(os.path.abspath(x))]
         pergunta = f"{os.path.abspath(x)}\n{pergunta}"
-    if not cabe_no_argv(cmd + ["-p"], pergunta):
-        return _agy_streaming(cmd, pergunta)
-    return roda(cmd + ["-p", pergunta])
+
+    def chama(ef):
+        cmd = [bin_de("agy"), "--model", modelo] + (["--effort", ef] if ef else [])
+        # Sem isto o agy trava esperando aprovacao de cada ferramenta e devolve
+        # resposta VAZIA no modo -p, sem dizer que travou. So ligar quando a tarefa
+        # realmente precisa de web/arquivo: auto-aprova tudo, inclusive shell.
+        if ferramentas:
+            cmd.append("--dangerously-skip-permissions")
+        for x in imagens:
+            cmd += ["--add-dir", os.path.dirname(os.path.abspath(x))]
+        if not cabe_no_argv(cmd + ["-p"], pergunta):
+            return _agy_streaming(cmd, pergunta)
+        return roda(cmd + ["-p", pergunta])
+
+    if effort == "xhigh":
+        try:
+            return chama("xhigh")
+        except SystemExit as e:
+            # Recusa real (agy 1.5.x): 'has no "xhigh" effort'. Aspas opcionais.
+            if not re.search(r'no "?xhigh"? effort', str(e)):
+                raise
+            return chama("high")
+    return chama(effort)
 
 
 def _agy_streaming(cmd, pergunta):
@@ -335,6 +430,17 @@ def via_claude(pergunta, imagens, modelo, effort, ferramentas=False):
     ferramenta = "default" if ferramentas else ("Read" if imagens else "")
     cmd = [bin_de("claude"), "-p", "--output-format", "text", "--model", modelo,
            "--tools", ferramenta, "--no-session-persistence"]
+    # `--tools default` libera a lista de tools, mas NAO a permissao: no modo -p
+    # o prompt de permissao do WebFetch e negado automaticamente, e o agente
+    # entao conclui que nao tem internet -- medido em 19/09/2026, respondia
+    # SEM_WEB com as tools ligadas. Nomear as duas em --allowedTools resolve sem
+    # precisar de --dangerously-skip-permissions: e o menor privilegio que faz a
+    # web funcionar, e Bash/Edit seguem pedindo permissao (ou seja, negados).
+    #
+    # Uma string com virgula, nao dois argumentos: a flag e variadica e engoliria
+    # o proximo item do cmd como se fosse nome de tool.
+    if ferramentas:
+        cmd += ["--allowedTools", "WebFetch,WebSearch"]
     if effort in ("low", "medium", "high", "xhigh", "max"):
         cmd += ["--effort", effort]
     for x in imagens:
@@ -346,33 +452,63 @@ def via_claude(pergunta, imagens, modelo, effort, ferramentas=False):
     # jeito que o codex. Timeout de 1200s porque com effort alto e dossie
     # grande ele passa minutos antes do primeiro byte (igual ao commandcode).
     if "\n" in pergunta or not cabe_no_argv(cmd + ["--"], pergunta):
-        return roda(cmd, entrada=pergunta, timeout=1200)
-    return roda(cmd + ["--", pergunta], timeout=1200)
+        return roda(cmd, entrada=pergunta)
+    return roda(cmd + ["--", pergunta])
 
 
 def via_opencode(pergunta, imagens, modelo, effort, ferramentas=False):
-    # O -f nao entrega a imagem ao modelo; passa o caminho no texto e deixa o
-    # agente abrir. Prompt em UMA linha: \n em argv sai com erro vazio aqui.
-    if imagens:
-        pergunta = ("Leia estas imagens: "
-                    + " ".join(os.path.abspath(x) for x in imagens)
-                    + ". " + pergunta)
-    elif not ferramentas:
+    # Imagem vai como ANEXO de verdade, na flag `--file` da CLI (ver `anexos`
+    # mais abaixo) -- nao como caminho escrito no meio do texto.
+    #
+    # Ate 19/09/2026 este wrapper mandava o caminho no prompt ("Leia estas
+    # imagens: C:\..."), e o comentario aqui dizia que a flag "nao entrega a
+    # imagem ao modelo". Entrega: o que quebrava era a ORDEM dos argumentos.
+    # `--file` e variadico e, vindo antes do texto, engolia a pergunta como se
+    # fosse mais um arquivo ("Error: File not found: descreva a imagem..."),
+    # com ou sem `--` no meio (a CLI usa yargs, onde o separador nao ajuda).
+    # Com a mensagem primeiro e `--file` no fim, o modelo descreve a imagem.
+    #
+    # O jeito antigo tinha um custo escondido: o agente precisava ABRIR o
+    # arquivo com ferramenta, e todo caminho fora do diretorio de trabalho cai
+    # em "permission requested: external_directory; auto-rejecting". Sem `-f`
+    # (que liga o --auto) a leitura era negada e a resposta voltava VAZIA, com
+    # rc=0 -- falha silenciosa. Como anexo isso nao acontece: nao passa por
+    # permissao nenhuma.
+    if not imagens and not ferramentas:
         pergunta = "NAO use ferramenta. " + pergunta
     cmd = [bin_de("opencode"), "run", "-m", modelo]
+    # Mesma armadilha do agy: as tools existem, mas sem auto-aprovacao a CLI
+    # fica esperando permissao de cada uma e devolve resposta vazia no modo nao
+    # interativo. Tirar o "NAO use ferramenta" do prompt (acima) nao basta.
+    #
+    # `--auto` e grosso -- a propria CLI chama de "dangerous", porque aprova
+    # tudo que nao esteja negado, shell incluso. O `run --help` do opencode nao
+    # oferece allowlist por tool como o claude, entao e isto ou nada.
+    #
+    # Fronteira: isto mexe no NOSSO wrapper, que chama a CLI dele. A config do
+    # opencode (~/.config/opencode) nao e nossa e nao se toca.
+    if ferramentas:
+        cmd.append("--auto")
     # --variant e o esforco do provider. Cuidado: a CLI aceita QUALQUER valor
     # calada (testei "banana", rc=0), entao nao da para provar que ela honra o
     # que foi pedido — por isso o teto fica no high, que existe no catalogo.
     if effort:
         cmd += ["--variant", "high" if effort in ("xhigh", "max") else effort]
+    # Os anexos entram DEPOIS da mensagem no caminho do argv, porque `--file` e
+    # variadico e comeria o texto da pergunta se viesse antes (ver o comentario
+    # no topo). No caminho do stdin nao existe positional para disputar, entao
+    # a posicao deles tanto faz.
+    anexos = []
+    for x in imagens:
+        anexos += ["--file", os.path.abspath(x)]
     uma_linha = " ".join(pergunta.split())
     # `opencode.CMD` passa por cmd.exe e morre em ~8.191 caracteres (WinError
     # 206). Pelo stdin ele aceita a pergunta inteira -- e com quebra de linha,
     # entao achatar em uma linha so faz sentido no caminho do argv.
-    if not cabe_no_argv(cmd, uma_linha):
-        saida = roda(cmd, entrada=pergunta)
+    if not cabe_no_argv(cmd + anexos, uma_linha):
+        saida = roda(cmd + anexos, entrada=pergunta)
     else:
-        saida = roda(cmd + [uma_linha])
+        saida = roda(cmd + [uma_linha] + anexos)
     # A CLI do opencode roda com o SessionStart do projeto dela, que imprime um
     # banner antes da resposta. E config do outro projeto (~/.config/opencode),
     # que nao e nossa para mexer — entao a limpeza mora aqui: corta as linhas de
@@ -389,7 +525,17 @@ def via_opencode(pergunta, imagens, modelo, effort, ferramentas=False):
         linhas.pop(0)
     while linhas and (not linhas[-1].strip() or linhas[-1].strip() in lixo):
         linhas.pop()
-    return "\n".join(linhas)
+    texto = "\n".join(linhas)
+    # Sobra de bloco de raciocinio. Modelo que pensa em <think>...</think> as
+    # vezes tem o CONTEUDO filtrado pela CLI e a tag de fechamento escapa, e ai
+    # a resposta comeca com um "</think>" solto -- visto em 19/09/2026 com
+    # alibaba-token-plan/qwen3.8-flash numa chamada com imagem. Passa
+    # despercebido porque a resposta ao redor esta certa, mas vai inteiro para
+    # o dossie da rodada seguinte do esquadrao. Corta o bloco todo quando as
+    # duas tags vierem, e a tag solta quando so ela sobrar.
+    texto = re.sub(r"(?is)^\s*<think>.*?</think>\s*", "", texto)
+    texto = re.sub(r"(?i)^\s*</think>\s*", "", texto)
+    return texto
 
 
 def via_commandcode(pergunta, imagens, modelo, effort, ferramentas=False):
@@ -400,14 +546,24 @@ def via_commandcode(pergunta, imagens, modelo, effort, ferramentas=False):
                     + " ".join(os.path.abspath(x) for x in imagens)
                     + "\n\n" + pergunta)
     base = [bin_de("commandcode"), "-p", "-m", modelo]
-    resto = ["--tools-all", "-t", "--no-session", "--max-turns", "16",
+    # sem permission-mode o print mode nega ferramenta em silencio ("nao tenho
+    # acesso a ferramenta"); medido 2026-09-23, travou o Spark varias vezes
+    # 2026-09-24: accept-edits libera arquivo mas NEGA shell -- o Spark nao roda
+    # pytest e devolve o codigo em texto ("me reexecute com --yolo"). Com -f vai
+    # yolo, o mesmo nivel do --approve-for-me do codex.
+    # 2026-09-24 (2a medicao): no -p so o flag --yolo libera; "--permission-mode yolo"
+    # e aceito e IGNORADO (arquivo nao criado). Testado criando arquivo de verdade.
+    resto = ["--tools-all", "-t", *(["--yolo"] if ferramentas else ["--permission-mode", "accept-edits"]),
+             # 2026-09-24: 200 turnos parou o Spark no meio do plano do frontend. Agente nao se
+             # limita por contagem; travado quem pega e o corte por ociosidade de roda().
+             "--no-session", "--max-turns", "10000" if ferramentas else "200",
              "--skip-onboarding", "--no-auto-update"]
     for x in imagens:
         resto += ["--add-dir", os.path.dirname(os.path.abspath(x))]
 
     def chama(com_effort):
         cmd = base + (["--effort", effort] if (effort and com_effort) else []) + resto
-        return roda(cmd, entrada=pergunta, timeout=1200)
+        return roda(cmd, entrada=pergunta)
 
     if not effort:
         return chama(False)
@@ -429,121 +585,56 @@ def via_commandcode(pergunta, imagens, modelo, effort, ferramentas=False):
         return chama(False)
 
 
-# --- APIs (chave) -----------------------------------------------------------
-
-def openai_compat(url, k, modelo, pergunta, imagens, extra=None):
-    conteudo = [{"type": "image_url", "image_url": {"url": data_url(x)}}
-                for x in imagens]
-    # Surrogate solto aqui derruba a chamada inteira com um erro que PARECE do
-    # provedor ("lone leading surrogate in hex escape"), e nao daqui. Ver
-    # `sem_surrogates`.
-    conteudo.append({"type": "text", "text": sem_surrogates(pergunta)})
-    # max_tokens curto devolve resposta VAZIA: o raciocinio consome tudo e o
-    # finish_reason vem "length" com content nulo.
-    #
-    # Eram 4.000, e isso NAO era teto de sobra. Em 15/09/2026, na consulta com
-    # effort alto, o juiz observou que "openrouter2 e openrouter3 ficaram como
-    # raciocinios incompletos, sem as tres propostas fechadas": nao foi o modelo
-    # sendo raso, foi a cota acabando no meio. Com raciocinio ligado, os tokens
-    # de pensamento saem DESTE mesmo orcamento -- 4.000 e pouco para pensar e
-    # ainda escrever. O prejuizo e pior no refino, onde a resposta cortada vira
-    # insumo da rodada seguinte e os outros criticam um texto pela metade.
-    pedido = {"model": modelo, "max_tokens": MAX_TOKENS,
-              "messages": [{"role": "user", "content": conteudo}]}
-    pedido.update(extra or {})
-    req = urllib.request.Request(url, data=json.dumps(pedido).encode(), headers={
-        "Authorization": "Bearer " + k, "Content-Type": "application/json",
-        # Sem User-Agent a borda da CommandCode devolve Cloudflare 1010.
-        "User-Agent": "llm-tool/1.0"})
-    try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT_API) as r:
-            d = json.load(r)
-    except urllib.error.HTTPError as e:
-        # 401/403/400 e regra do provedor, nao falha tecnica: falha e para, sem
-        # retry e sem trocar de porta. Foi insistir depois de uma negativa que
-        # bloqueou a conta OpenCode.
-        raise SystemExit(f"HTTP {e.code} de {url.split('/')[2]}: "
-                         f"{e.read().decode('utf-8', 'replace')[:200]}")
-    # Nem toda resposta 200 traz `choices`. Alguns gateways devolvem erro com
-    # status 200 e corpo {"error": {...}}, e ai o acesso direto estourava um
-    # KeyError CRU -- que sobe como traceback e nao como falha de provedor,
-    # entao o esquadrao mostra "[FALHOU] 'choices'" e ninguem descobre o motivo.
-    # A mensagem util esta no corpo; e ela que tem de aparecer.
-    if not d.get("choices"):
-        err = d.get("error")
-        if isinstance(err, dict):
-            err = err.get("message") or json.dumps(err)[:200]
-        raise SystemExit(f"{url.split('/')[2]} respondeu sem 'choices': "
-                         f"{err or json.dumps(d)[:200]}")
-    escolha = d["choices"][0]
-    m = escolha["message"]
-    # Alguns modelos poem a resposta no fim do raciocinio e deixam content nulo.
-    # Cada API nomeia esse rascunho de um jeito: reasoning no openrouter,
-    # reasoning_content no deepseek e no alibaba.
-    texto = (m.get("content") or m.get("reasoning")
-             or m.get("reasoning_content") or "")
-    if not texto.strip():
-        # Devolver "" daqui e a pior saida possivel: o esquadrao registra o
-        # provedor como tendo participado, o dossie ganha uma entrada vazia e
-        # ninguem descobre por que aquele modelo "nao teve opiniao". Falha
-        # declarada, com o motivo que a API deu.
-        motivo = escolha.get("finish_reason") or "sem finish_reason"
-        uso = d.get("usage") or {}
-        raise SystemExit(
-            f"resposta vazia de {url.split('/')[2]} (finish_reason={motivo}; "
-            f"tokens: entrada={uso.get('prompt_tokens', '?')} "
-            f"saida={uso.get('completion_tokens', '?')} de {MAX_TOKENS})"
-            + (" -- o raciocinio consumiu o orcamento inteiro; subir MAX_TOKENS"
-               if motivo == "length" else ""))
-    return texto
-
-
-def via_openrouter(pergunta, imagens, modelo, effort, ferramentas=False):
-    return openai_compat("https://openrouter.ai/api/v1/chat/completions",
-                         chave(r"sk-or-[A-Za-z0-9._-]+"), modelo, pergunta, imagens,
-                         {"reasoning_effort": effort} if effort else None)
-
-
-def via_deepseek(pergunta, imagens, modelo, effort, ferramentas=False):
-    # Chave em APIS na linha DEEPSEEK_API_KEY=. O sk- generico dela colide com
-    # o de outros provedores no arquivo, por isso a busca e pelo rotulo.
-    # reasoning_effort existe aqui: verificado em 12/09/2026 que low/high/xhigh
-    # passam e que "banana" da 400 listando o enum. Nao e ignorado como o
-    # wrapper supunha.
-    if imagens:
-        raise SystemExit("deepseek nao aceita imagem; use agy/openrouter/alibaba")
-    # O servidor aceita xhigh mas mapeia para high internamente. Reancorar aqui
-    # faz o painel e a CLI concordarem sobre o que foi de fato pedido.
-    if effort == "xhigh":
-        effort = "high"
-    return openai_compat("https://api.deepseek.com/chat/completions",
-                         chave(r"(?<=DEEPSEEK_API_KEY=)\S+"), modelo, pergunta, [],
-                         {"reasoning_effort": effort} if effort else None)
-
-
-def via_alibaba(pergunta, imagens, modelo, effort, ferramentas=False):
-    # A sk-sp- do Token Plan so responde no gateway dele.
-    # O pensamento aqui e opt-in: sem enable_thinking o reasoning_effort nao faz
-    # nada. Com ele, low/xhigh/max passam e voltam com reasoning_content;
-    # "banana" da 400. Effort vazio desliga o pensamento de proposito.
-    extra = ({"enable_thinking": True, "reasoning_effort": effort} if effort
-             else {"enable_thinking": False})
-    return openai_compat("https://token-plan.ap-southeast-1.maas.aliyuncs.com"
-                         "/compatible-mode/v1/chat/completions",
-                         chave(r"sk-sp-\S+"), modelo, pergunta, imagens, extra)
+# via_openrouter, via_deepseek e via_alibaba (API crua, chamada HTTP direta com
+# openai_compat()) sairam em 19/09/2026: zero ferramenta, sempre -- so texto
+# completado do treino. `opencode providers list` mostra que o gateway do
+# opencode ja tem as tres contas como credencial propria ("OpenRouter api",
+# "DeepSeek api", "Alibaba Token Plan api", em ~/.local/share/opencode/
+# auth.json) e `opencode models` lista os tres namespaces (openrouter/,
+# deepseek/, alibaba-token-plan/), cada um testado na mao com chamada real.
+# Mesma conta, mesmo catalogo, mas agora e a CLI do opencode que chama -- com
+# ferramenta disponivel quando `ferramentas=True` pede (--auto), e sem quando
+# nao pede, exatamente como o slot "opencode" ja funcionava. via_opencode
+# serve isto sozinho: so precisa do modelo vir com o namespace certo (ver
+# PROVEDORES abaixo). openai_compat() nao tem mais chamador nenhum e saiu
+# junto -- nao existe API crua sobrando no esquadrao depois desta troca.
 
 
 PROVEDORES = {
     # terra > luna na pratica: o luna dava respostas rasas no esquadrao.
     "codex":       (via_codex,           "gpt-5.6-terra"),
     "agy":         (via_agy,             "gemini-3.8-flash-medium"),
-    "opencode":    (via_opencode,        "opencode-go/muse-spark-1.3-contributor"),
+    # O padrao do opencode e um FREE de proposito: o ZEN e pay-as-you-go e a
+    # carteira esta zerada, entao qualquer modelo pago (o minimax-m3, que era o
+    # padrao ate 19/09/2026) devolve "Insufficient balance" antes de pensar --
+    # `llm opencode "pergunta"` falhava sem `-m`. O free tier exige CLI 1.18+.
+    "opencode":    (via_opencode,        "opencode/nemotron-3-ultra-free"),
     "commandcode": (via_commandcode,     "meta/muse-spark-1.3-contributor"),
-    "openrouter":  (via_openrouter,      "z-ai/glm-5.3-flash"),
-    "alibaba":     (via_alibaba,         "qwen3.8-flash"),
-    "deepseek":    (via_deepseek,        "deepseek-chat"),
+    "openrouter":  (via_opencode,        "openrouter/z-ai/glm-5.3-flash"),
+    "alibaba":     (via_opencode,        "alibaba-token-plan/qwen3.8-flash"),
+    "deepseek":    (via_opencode,        "deepseek/deepseek-flash"),
     "claude":      (via_claude,          "sonnet"),
 }
+
+# Provedores cujo wrapper honra `ferramentas` de verdade -- todos de CLI, onde
+# existe um agente do outro lado.
+#
+# Desde 19/09/2026 sao TODOS: openrouter, alibaba e deepseek passaram a chamar
+# via_opencode (o gateway do opencode tem as tres contas como credencial
+# propria -- `opencode providers list`), e nao sobrou nenhuma API crua no
+# esquadrao. A lista continua aqui porque e ela que o esquadrao consulta para
+# avisar, e porque um provedor novo pode entrar sem agente do outro lado.
+# Nomes-base: quem checa clone passa por base() primeiro.
+#
+# RESSALVA medida em 19/09/2026: o agente do opencode manda o schema de
+# ferramenta para o modelo SEMPRE, mesmo sem `--auto` (ferramentas=False so
+# tira a auto-aprovacao, nao o schema). Modelo sem suporte a tool-calling
+# falha a chamada inteira -- visto em openrouter/z-ai/glm-5.2:free, que
+# devolve "No endpoints found that support tool use". Nao e a maioria (4 de 5
+# testados passaram), mas na hora de escolher modelo free no painel e isto que
+# separa o que funciona do que nao.
+FERRAMENTAS_OK = ("codex", "agy", "claude", "opencode", "commandcode",
+                  "openrouter", "alibaba", "deepseek")
 
 # Batalhao: o mesmo provedor entrando mais de uma vez, cada linha com seu
 # modelo. O nome e o do provedor + um numero, e TUDO que olha provedor (menu de
@@ -553,10 +644,16 @@ ORIGINAIS = tuple(PROVEDORES)          # antes dos clones entrarem
 # 16/09/2026: os slots extras dos CLIs entraram junto com os do openrouter.
 # Slots do mesmo nome-base compartilham gateway e sessao; o que muda entre eles
 # e so o modelo escolhido no painel.
-CLONES = {"openrouter": 3, "agy": 3, "codex": 2, "claude": 2, "opencode": 2}
+CLONES = {"openrouter": 2, "agy": 4, "codex": 2, "claude": 2, "commandcode": 4,
+          "opencode": 2, "alibaba": 2}
 for _nome, _n in CLONES.items():
     for _i in range(2, _n + 1):
         PROVEDORES[f"{_nome}{_i}"] = PROVEDORES[_nome]
+# 20/11/2026: slot com modelo proprio, que nao herda o do pai. O juiz do painel
+# escolhe entre slots; o agy4 deixa o Gemini 4 Neon puro sempre na lista.
+SLOT_FIXO = {"agy4": ("gemini-4-neon", "high")}
+for _nome, (_modelo, _ef) in SLOT_FIXO.items():
+    PROVEDORES[_nome] = (PROVEDORES[re.sub(r"\d+$", "", _nome)][0], _modelo)
 
 
 def base(nome):
@@ -564,6 +661,55 @@ def base(nome):
     contra ORIGINAIS, nao contra o regex, para um provedor que legitimamente
     termine em numero nao ser decapitado."""
     return nome if nome in ORIGINAIS else re.sub(r"\d+$", "", nome)
+
+
+# 24/09/2026: -m montado de cabeca (ex. `deepseek/deepseek-v4.1-flash`, que so
+# existe como `opencode/...` e no commandcode) custou quatro lancamentos que
+# falharam no provedor. Antes de lancar, conferir o nome na lista do proprio
+# CLI e, se faltar, dizer onde ele existe. codex/agy/claude nao listam: passam.
+LISTA_MODELOS = {
+    "opencode": ("opencode", "models"),
+    "openrouter": ("opencode", "models"),
+    "alibaba": ("opencode", "models"),
+    "deepseek": ("opencode", "models"),
+    "commandcode": ("commandcode", "--list-models"),
+}
+
+
+def modelos_de(cmd):
+    """Primeira coluna de cada linha com `/`; None se o CLI nao respondeu."""
+    try:
+        r = subprocess.run([bin_de(cmd[0]), *cmd[1:]], capture_output=True,
+                           text=True, encoding="utf-8", errors="replace", timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    nomes = {l.split()[0] for l in r.stdout.splitlines() if l.strip() and "/" in l.split()[0]}
+    return nomes or None
+
+
+def confere_modelo(provedor, modelo):
+    cmd = LISTA_MODELOS.get(base(provedor))
+    if not cmd:
+        return
+    nomes = modelos_de(cmd)
+    if nomes is None:
+        diz(f"[aviso] nao consegui listar os modelos de {cmd[0]}; seguindo sem conferir {modelo}")
+        return
+    if modelo in nomes:
+        return
+    sufixo = modelo.split("/")[-1]
+    onde = []
+    vistos = set()
+    for prov, outro in LISTA_MODELOS.items():
+        if outro in vistos:
+            continue  # openrouter/alibaba/deepseek dividem o gateway do opencode
+        vistos.add(outro)
+        lista = nomes if outro == cmd else modelos_de(outro)
+        for n in sorted(lista or ()):
+            if n.split("/")[-1] == sufixo and (prov, n) not in onde:
+                onde.append((prov, n))
+    dica = "\n".join(f"  llm {p} -m {n}" for p, n in onde) or "  (nenhum provedor listado tem esse nome)"
+    raise SystemExit(f"modelo {modelo!r} nao existe em {provedor} ({' '.join(cmd)}). Onde existe:\n{dica}")
 
 
 def main():
@@ -574,6 +720,8 @@ def main():
     p.add_argument("-i", "--imagem", action="append", default=[])
     p.add_argument("-m", "--modelo")
     p.add_argument("-e", "--effort", default="low", help='"" desliga')
+    p.add_argument("-f", "--ferramentas", action="store_true",
+                   help="libera web/arquivo; so vale nos provedores de CLI")
     a = p.parse_args()
 
     pergunta = a.pergunta or le_stdin().strip()
@@ -584,7 +732,25 @@ def main():
             raise SystemExit(f"imagem nao existe: {x}")
 
     fn, padrao = PROVEDORES[a.provedor]
-    diz(fn(pergunta, a.imagem, a.modelo or padrao, a.effort).strip())
+    global TETO_AGENTE
+    if a.ferramentas:
+        TETO_AGENTE = 3600
+    if a.modelo:
+        confere_modelo(a.provedor, a.modelo)
+    # 2026-09-24, ordem do usuario: commandcode so com o Spark contributor
+    # (os outros modelos consomem a cota semanal).
+    # 2026-09-27: space-bunny-alpha (free) liberado a pedido.
+    # 2026-10-19: minimax-m3.1-flash-preview:free e beam:free liberados a pedido (benchmark).
+    if base(a.provedor) == "commandcode" and (a.modelo or padrao) not in (
+            "meta/muse-spark-1.3-contributor", "stealth/space-bunny-alpha",
+            "minimax/minimax-m3.1-flash-preview:free", "reflection/beam:free",
+            "deepseek/deepseek-v4.1-flash", "z-ai/glm-5.3-flash", "qwen/qwen3.8-flash", "xiaomi/mimo-v2.6-flash"):
+        raise SystemExit(f"commandcode so roda meta/muse-spark-1.3-contributor, stealth/space-bunny-alpha, minimax-m3.1-flash-preview:free ou beam:free (pedido: {a.modelo})")
+    if a.ferramentas and base(a.provedor) not in FERRAMENTAS_OK:
+        diz(f"[aviso] {a.provedor} e API crua, sem ferramenta nenhuma: "
+            f"--ferramentas nao tem efeito. Ele vai responder do treino.")
+    diz(fn(pergunta, a.imagem, a.modelo or padrao, a.effort,
+           a.ferramentas).strip())
 
 
 if __name__ == "__main__":

@@ -1,505 +1,459 @@
-<!doctype html><meta charset=utf-8><title>Esquadrao</title>
+<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Esquadrão</title>
+<link rel=preconnect href="https://fonts.googleapis.com"><link rel=preconnect href="https://fonts.gstatic.com" crossorigin>
+<link rel=stylesheet href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&display=swap">
 <style>
+/* Mesa de despacho: uma pergunta sai para ate 30 canais. O painel e um
+   instrumento, nao uma vitrine -- cinza-salvia de painel de equipamento, uma
+   lampada verde para canal ligado e UMA coisa ousada: o medidor de esforco,
+   que esquenta de salvia a vermelho porque esforco e custo. Cor fora disso
+   so para erro. Sem canvas de fundo, sem gradiente, sem entrada animada. */
 :root{
   /* Explicito, nao "light dark": o popup nativo do <select> segue o
      color-scheme, e no automatico o Chrome desenhava a lista com fundo branco
      e o texto claro do tema escuro - ilegivel. */
   color-scheme:light;
-  --bg:#f6f5f3; --painel:rgba(255,255,255,.82); --painel-solido:#fff;
-  --bar:rgba(255,255,255,.86); --elev:#fbfaf8;
-  --fg:#1a1917; --fg2:#5f5952; --fg3:#8b847c;
-  --line:rgba(40,30,60,.10); --line2:rgba(40,30,60,.20);
-  --ac:#5b21b6; --ac-fg:#fff; --ac-fraco:#efe9fb; --ac-txt:#5b21b6;
-  --ac-soft:rgba(124,58,237,.12);
-  /* Roxo como gradiente: usado no titulo, no monograma e no botao. NAO entra
-     em fundo de texto pequeno - la o roxo cheio com branco por cima e o que
-     passa no contraste (ver a nota do tema escuro). */
-  --grad:linear-gradient(135deg,#4c1d95 0%,#7c3aed 45%,#a78bfa 100%);
-  --grad-texto:linear-gradient(92deg,#4c1d95,#7c3aed 45%,#a78bfa);
-  --off:#f1eff4; --ok:#1f6b3e;
-  --sombra:0 1px 2px rgba(20,16,28,.05), 0 12px 32px -18px rgba(40,20,80,.35);
-  --sombra-btn:0 6px 18px -8px rgba(91,33,182,.6), inset 0 1px 0 rgba(255,255,255,.25);
-  --anel:0 0 0 3px rgba(124,58,237,.3);
-  --raio:18px;
+  --bg:#E6EAE6; --sup:#F6F7F5; --sup2:#EEF1EE;
+  --tinta:#1B2220; --tinta2:#55605B; --tinta3:#7E8984;
+  --linha:#CBD3CE; --linha2:#AEB9B3;
+  --on:#1E8756; --on-brilho:rgba(30,135,86,.35);
+  --h1:#B7CDBF; --h2:#E6C451; --h3:#E2863A; --h4:#C4432B;
+  --h-txt1:#1B2220; --h-txt2:#1B2220; --h-txt3:#1B2220; --h-txt4:#FFFFFF;
+  --acao:#1B2220; --acao-txt:#F6F7F5;
+  --erro:#B03A2A; --erro-fundo:#F7E4E0;
+  --foco:0 0 0 3px rgba(30,135,86,.35);
 }
 @media(prefers-color-scheme:dark){:root{
   color-scheme:dark;
-  --bg:#110f16; --painel:rgba(25,23,34,.78); --painel-solido:#191722;
-  --bar:rgba(17,15,22,.88); --elev:#1f1c2a;
-  --fg:#efecf5; --fg2:#a49eb4; --fg3:#7a7389;
-  --line:rgba(180,165,230,.13); --line2:rgba(180,165,230,.26);
-  /* Roxo cheio com texto branco: o lilas claro (#a78bfa) e legivel, mas some
-     como cor - no escuro ele le como cinza-lavanda, nao como roxo. O branco
-     em cima do 7c3aed passa folgado no contraste de leitura. */
-  --ac:#7c3aed; --ac-fg:#fff; --ac-fraco:#231b38; --ac-txt:#b9a2fb;
-  --ac-soft:rgba(124,58,237,.18);
-  --grad:linear-gradient(135deg,#6d28d9 0%,#a78bfa 50%,#ddd6fe 100%);
-  --grad-texto:linear-gradient(92deg,#8b5cf6,#c4b5fd 45%,#f5f3ff);
-  --off:#151321; --ok:#57b37c;
-  --sombra:0 1px 2px rgba(0,0,0,.45), 0 20px 46px -22px rgba(124,58,237,.35);
-  --sombra-btn:0 6px 20px -8px rgba(124,58,237,.75), inset 0 1px 0 rgba(255,255,255,.2);
-  --anel:0 0 0 3px rgba(167,139,250,.35);
-  --raio:18px;
+  --bg:#1E2422; --sup:#262E2B; --sup2:#2C3531;
+  --tinta:#E4EAE6; --tinta2:#A3AEA9; --tinta3:#76827C;
+  --linha:#39443F; --linha2:#4C5953;
+  --on:#44C98B; --on-brilho:rgba(68,201,139,.4);
+  --h1:#4F6B5C; --h2:#B89530; --h3:#CF6D2A; --h4:#D5533A;
+  --h-txt1:#E4EAE6; --h-txt2:#1B2220; --h-txt3:#1B2220; --h-txt4:#FFFFFF;
+  --acao:#E4EAE6; --acao-txt:#1E2422;
+  --erro:#F08F7C; --erro-fundo:#3A2522;
+  --foco:0 0 0 3px rgba(68,201,139,.4);
 }}
-/* Fundo em canvas: constelacao lenta em roxo. Fica atras de tudo e nao recebe
-   clique. Desenhado em devicePixelRatio para nao sair borrado em tela HiDPI -
-   canvas sem isso renderiza na resolucao CSS e escala, e ai as linhas finas
-   viram borrao cinza. z-index 0 (nao negativo): o body agora tem gradientes
-   proprios, e o negativo punha a constelacao atras deles. */
-#fundo{position:fixed;inset:0;z-index:0;pointer-events:none;display:block}
 *{box-sizing:border-box}
-body{color:var(--fg);margin:0;padding:34px 24px 28px;
-  background:
-    radial-gradient(900px 480px at 8% -10%, var(--ac-soft), transparent 60%),
-    radial-gradient(820px 520px at 95% -12%, rgba(167,139,250,.14), transparent 60%),
-    radial-gradient(900px 700px at 50% 118%, var(--ac-soft), transparent 60%),
-    var(--bg);
-  background-attachment:fixed;
-  font:14px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+body{margin:0;background:var(--bg);color:var(--tinta);
+  font:400 14px/1.5 "Archivo",system-ui,"Segoe UI",sans-serif;font-stretch:100%;
   -webkit-font-smoothing:antialiased}
-.wrap{max-width:900px;margin:0 auto;position:relative;z-index:1}
+.wrap{max-width:1040px;margin:0 auto;padding:32px 20px 24px}
+code,kbd,.mono{font-family:ui-monospace,"Cascadia Code",Consolas,monospace}
 
-/* --- cabecalho ----------------------------------------------------------- */
-header{padding:0 4px 22px}
-.eyebrow{display:inline-flex;align-items:center;gap:9px;font-size:11px;font-weight:800;
-  letter-spacing:.18em;text-transform:uppercase;color:var(--ac-txt);
-  background:var(--ac-soft);border:1px solid var(--line);
-  border-radius:999px;padding:6px 14px;margin-bottom:14px}
-.eyebrow::before{content:"";width:8px;height:8px;border-radius:50%;
-  background:var(--grad);box-shadow:0 0 12px var(--ac)}
-h1{font-size:34px;font-weight:800;letter-spacing:-.03em;line-height:1.1;margin:0 0 10px;
-  background:var(--grad-texto);-webkit-background-clip:text;background-clip:text;
-  color:transparent;width:fit-content}
-header p{margin:0;color:var(--fg2);font-size:13.5px;max-width:64ch}
-kbd{font:12px ui-monospace,"Cascadia Code",monospace;background:var(--off);
-  border:1px solid var(--line);border-radius:6px;padding:2px 7px;color:var(--fg2);
-  white-space:nowrap}
-.chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
-.chip{font-size:11.5px;font-weight:600;color:var(--fg2);background:var(--painel);
-  border:1px solid var(--line);border-radius:999px;padding:5px 13px;
-  box-shadow:var(--sombra);
-  -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
-  display:inline-flex;align-items:center;gap:6px}
-.chip b{color:var(--ac-txt);font-weight:800;font-variant-numeric:tabular-nums}
-.chip.forte{background:var(--ac-fraco);border-color:var(--line2);color:var(--fg)}
+/* --- topo ------------------------------------------------------------------ */
+/* O nome do comando e a unica peca de tipografia expressiva: largo e pesado,
+   como a gravacao na chapa de um aparelho. */
+.topo{display:flex;align-items:baseline;justify-content:space-between;gap:12px 24px;
+  flex-wrap:wrap;margin-bottom:18px}
+h1{margin:0;font-size:36px;line-height:1;font-weight:780;font-stretch:125%;
+  letter-spacing:-.01em}
+.estado{margin:0;color:var(--tinta2);font-size:13.5px}
+.estado b{color:var(--tinta);font-weight:650;font-variant-numeric:tabular-nums}
 
-/* --- cards --------------------------------------------------------------- */
-/* Deixou de ser tabela: cada provedor e um cartao proprio. Numa lista de 15
-   slots a borda continua da tabela virava parede - o respiro entre cartoes e
-   o que deixa achar a linha certa sem contar de cima. */
-.grade{display:flex;flex-direction:column;gap:8px;background:transparent;border:0}
-.cab{display:none}
-.p{display:grid;grid-template-columns:38px minmax(150px,auto) minmax(0,1fr) 228px;
-  align-items:center;gap:14px;padding:12px 18px;
-  background:var(--painel);border:1px solid var(--line);border-radius:var(--raio);
-  box-shadow:var(--sombra);
-  -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
-  transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease,opacity .16s ease;
-  animation:subir .45s cubic-bezier(.2,.7,.3,1) backwards}
-#lista>.p:nth-child(1){animation-delay:.02s}#lista>.p:nth-child(2){animation-delay:.05s}
-#lista>.p:nth-child(3){animation-delay:.08s}#lista>.p:nth-child(4){animation-delay:.11s}
-#lista>.p:nth-child(5){animation-delay:.14s}#lista>.p:nth-child(6){animation-delay:.17s}
-#lista>.p:nth-child(7){animation-delay:.2s}#lista>.p:nth-child(8){animation-delay:.23s}
-#lista>.p:nth-child(n+9){animation-delay:.26s}
-@keyframes subir{from{opacity:0;transform:translateY(14px) scale(.99)}to{opacity:1;transform:none}}
-.p:hover{transform:translateY(-2px)}
-/* No lote = filete roxo na borda de dentro. E a unica marca que se le de
-   relance numa coluna de 15, sem ter de olhar o interruptor de cada um. */
-.p:not(.off){border-color:var(--line2);box-shadow:var(--sombra),inset 3px 0 0 var(--ac)}
-/* Fora do lote continua totalmente legivel: o que muda e a cor e o peso,
-   nao o contraste do texto. Cinza-claro sobre branco era o que sumia. */
-.p.off{opacity:.64}
-.p.off .nome{color:var(--fg2);font-weight:600}
-.p.off .marca{background:var(--line2);color:var(--fg3);box-shadow:none}
-.p.off select,.p.off input[type=text]{color:var(--fg2)}
-/* Desativado nao deve brilhar: o effort marcado perde o destaque para nao
-   parecer que a linha esta no lote. */
-.p.off .eff input:checked+span{background:var(--line2);color:var(--fg2);
-  font-weight:600;box-shadow:none}
-
-/* --- interruptor --------------------------------------------------------- */
-.at{appearance:none;-webkit-appearance:none;margin:0;cursor:pointer;flex:none;
-  width:38px;height:22px;border-radius:999px;background:var(--line2);
-  border:0;position:relative;transition:background .18s}
-.at::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;
-  border-radius:50%;background:#fff;transition:left .18s cubic-bezier(.2,.7,.3,1.2);
-  box-shadow:0 1px 3px rgba(0,0,0,.3)}
-.at:checked{background:var(--grad)}
-.at:checked::after{left:18px}
-.at:focus-visible{outline:none;box-shadow:var(--anel)}
-
-.nome{font-weight:700;font-size:14.5px;display:flex;align-items:center;gap:10px;min-width:0}
-.marca{flex:none;width:28px;height:28px;border-radius:9px;background:var(--grad);
-  color:#fff;font-size:12.5px;font-weight:800;text-transform:uppercase;
-  display:grid;place-items:center;font-style:normal;
-  box-shadow:0 4px 12px -5px var(--ac), inset 0 1px 0 rgba(255,255,255,.35)}
-.tag{font-style:normal;font-size:9.5px;font-weight:800;letter-spacing:.1em;
-  text-transform:uppercase;color:var(--fg2);background:var(--ac-soft);
-  border:1px solid var(--line);border-radius:999px;padding:3px 9px;white-space:nowrap}
-
-select,input[type=text],input[type=number]{
-  width:100%;background:var(--painel-solido);color:var(--fg);border:1px solid var(--line2);
-  border-radius:12px;padding:7px 10px;
-  font:12.5px ui-monospace,"Cascadia Code",monospace;
-  transition:border-color .15s ease,box-shadow .15s ease}
-select{appearance:none;-webkit-appearance:none;padding-right:30px;cursor:pointer;
-  background-repeat:no-repeat;background-position:right 12px center;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238b5cf6' stroke-width='1.8' fill='none' stroke-linecap='round'/%3E%3C/svg%3E")}
-select:hover,input[type=text]:hover,input[type=number]:hover{border-color:var(--ac)}
-select option{background:var(--painel-solido);color:var(--fg)}
-select:focus-visible,input:focus-visible{outline:none;border-color:var(--ac);box-shadow:var(--anel)}
-.livre{margin-top:6px}
-
-/* --- esforco ------------------------------------------------------------- */
-.eff{display:grid;grid-template-columns:repeat(4,1fr);gap:3px;
-  background:var(--off);border:1px solid var(--line);border-radius:14px;padding:3px}
-.eff label{cursor:pointer;text-align:center;min-width:0}
-.eff input{position:absolute;opacity:0;pointer-events:none}
-.eff label span{display:block;padding:6px 0;font-size:11px;font-weight:700;color:var(--fg2);
-  border-radius:11px;transition:background .15s,color .15s;white-space:nowrap}
-.eff label:hover span{color:var(--fg);background:var(--ac-soft)}
-/* Roxo cheio com branco por cima, nao gradiente: e texto de 11px, e aqui o
-   contraste vale mais que o acabamento. */
-.eff input:checked+span{background:var(--ac);color:var(--ac-fg);
-  box-shadow:0 4px 12px -5px var(--ac)}
-.eff input:focus-visible+span{box-shadow:var(--anel)}
-/* Uma opcao que nao vale NESTE provedor fica visivel e apagada: sumir com ela
-   esconderia que ela existe; deixar clicavel prometeria o que nao acontece. */
-.eff input:disabled+span{color:var(--fg3);background:transparent;cursor:not-allowed}
-.eff input:disabled:checked+span{background:var(--line2);color:var(--fg2);
-  font-weight:600;box-shadow:none}
-.eff.na{opacity:.6}
-.eff.na label{cursor:not-allowed}
-.eff.na label:hover span{color:var(--fg2);background:none}
-.na-nota{display:block;font-size:11px;color:var(--fg3);margin-top:5px;line-height:1.35}
-
-/* --- console: rodar o esquadrao daqui ------------------------------------ */
-.console{background:var(--painel);border:1px solid var(--line);border-radius:var(--raio);
-  padding:18px;box-shadow:var(--sombra);margin-bottom:18px;
-  -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
-.console textarea{width:100%;min-height:92px;resize:vertical;
-  background:var(--painel-solido);color:var(--fg);border:1px solid var(--line2);
-  border-radius:14px;padding:13px 15px;
-  font:13.5px/1.5 ui-sans-serif,system-ui,"Segoe UI",sans-serif;
-  transition:border-color .15s ease,box-shadow .15s ease}
-.console textarea::placeholder{color:var(--fg3)}
-.console textarea:hover{border-color:var(--ac)}
-.console textarea:focus-visible{outline:none;border-color:var(--ac);box-shadow:var(--anel)}
+/* --- console --------------------------------------------------------------- */
+.console{background:var(--sup);border:1px solid var(--linha);border-radius:8px;padding:16px}
+.console textarea{display:block;width:100%;min-height:96px;resize:vertical;
+  background:var(--bg);color:var(--tinta);border:1px solid var(--linha);border-radius:6px;
+  padding:12px 14px;font:inherit;font-size:15px;line-height:1.5}
+.console textarea::placeholder{color:var(--tinta3)}
 .console textarea:disabled{opacity:.6}
-.linha{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:12px}
-.dica-teclas{font-size:11.5px;color:var(--fg3)}
-.dica-teclas b{color:var(--fg2);font-weight:700}
-/* Barra de progresso: so aparece com lote em andamento. */
-.andamento{display:none;align-items:center;gap:12px;flex:1;min-width:210px}
+.comandos{display:flex;align-items:flex-end;gap:12px 16px;flex-wrap:wrap;margin-top:12px}
+.campo{display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--tinta2);
+  font-weight:550}
+.campo select{min-width:140px}
+#juiz{max-width:340px}
+.campo input{width:84px}
+.espaco{flex:1}
+/* Os botoes andam juntos: ao quebrar a linha, o Enviar nao fica sozinho
+   embaixo do Modo, separado do Parar e do So gratis. */
+.botoes{display:flex;gap:10px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
+.dica{margin:10px 0 0;color:var(--tinta2);font-size:13px;max-width:78ch}
+.andamento{display:none;align-items:center;gap:12px;margin-top:12px}
 .andamento.v{display:flex}
-.barra{flex:1;height:6px;border-radius:999px;background:var(--off);overflow:hidden;
-  border:1px solid var(--line)}
-.barra i{display:block;height:100%;width:0;background:var(--grad);
-  transition:width .35s cubic-bezier(.2,.7,.3,1)}
-/* Enquanto nao ha quanto medir (consenso e arquiteto nao sabem o total de
-   chamadas de antemao), a barra anda sozinha em vez de mentir um numero. */
-.barra.indef i{width:35%;animation:desliza 1.5s ease-in-out infinite}
-@keyframes desliza{0%{margin-left:-35%}100%{margin-left:100%}}
-.relogio{font:12px ui-monospace,"Cascadia Code",monospace;color:var(--fg2);
-  font-variant-numeric:tabular-nums}
+.barra{flex:1;height:4px;background:var(--linha);overflow:hidden;border-radius:2px}
+.barra i{display:block;height:100%;width:0;background:var(--on);transition:width .3s ease}
+/* Consenso e arquiteto nao sabem o total de chamadas: a barra anda sozinha em
+   vez de mentir um numero. */
+.barra.indef i{width:30%;animation:desliza 1.6s ease-in-out infinite}
+@keyframes desliza{0%{margin-left:-30%}100%{margin-left:100%}}
+.relogio{font-size:12.5px;color:var(--tinta2);font-variant-numeric:tabular-nums}
 
-/* --- resultados ---------------------------------------------------------- */
-#saida{display:flex;flex-direction:column;gap:10px;margin-bottom:18px}
+/* --- controles comuns ------------------------------------------------------ */
+select,input[type=text],input[type=number]{background:var(--bg);color:var(--tinta);
+  border:1px solid var(--linha2);border-radius:5px;padding:6px 9px;
+  font:13px ui-monospace,"Cascadia Code",Consolas,monospace}
+.campo select,.campo input{font:500 13.5px "Archivo",system-ui,sans-serif}
+select{appearance:none;-webkit-appearance:none;padding-right:28px;cursor:pointer;
+  background-repeat:no-repeat;background-position:right 10px center;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%237E8984' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E")}
+select option{background:var(--sup);color:var(--tinta)}
+/* O popup nativo do <select> e uma janela do Windows: com zoom != 100% ou DPI
+   misto sobra uma moldura branca que CSS nenhum alcanca. base-select (Chrome
+   135+) desenha a lista dentro da pagina; sem suporte, fica o nativo. */
+@supports (appearance:base-select){
+  select{appearance:base-select}
+  select::picker-icon{display:none}
+  select::picker(select){appearance:base-select;background:var(--sup);color:var(--tinta);
+    border:1px solid var(--linha2);border-radius:6px;max-height:360px;overflow-y:auto;padding:3px}
+  select option{padding:5px 8px;border-radius:4px}
+  select option:hover,select option:focus-visible{background:var(--sup2)}
+  select option:checked{font-weight:650}
+  select option::checkmark{display:none}
+}
+select:hover,input[type=text]:hover,input[type=number]:hover{border-color:var(--tinta3)}
+:focus-visible{outline:none;box-shadow:var(--foco)}
+button{font:650 14px "Archivo",system-ui,sans-serif;padding:10px 20px;border-radius:6px;
+  border:1px solid var(--acao);background:var(--acao);color:var(--acao-txt);cursor:pointer}
+button:hover:not(:disabled){opacity:.88}
+button.sec{background:transparent;color:var(--tinta);border-color:var(--linha2);font-weight:550}
+button.sec:hover:not(:disabled){border-color:var(--tinta3);opacity:1}
+button:disabled{opacity:.45;cursor:default}
+
+/* --- respostas ------------------------------------------------------------- */
+#saida{display:flex;flex-direction:column;gap:8px;margin-top:18px}
 #saida:empty{display:none}
-.leva{display:flex;flex-direction:column;gap:10px}
-.leva+.leva{margin-top:8px}
-.sep{display:flex;align-items:center;gap:12px;margin:6px 2px 0;
-  font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;
-  color:var(--ac-txt)}
-.sep::after{content:"";flex:1;height:1px;background:var(--line2)}
-/* Rodada ainda sem nome: o titulo real so chega quando ela fecha. */
-.sep.abrindo{color:var(--fg3)}
-.r{background:var(--painel);border:1px solid var(--line);border-radius:var(--raio);
-  box-shadow:var(--sombra);overflow:hidden;
-  -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
-  animation:subir .35s cubic-bezier(.2,.7,.3,1) backwards}
-.r>summary{display:flex;align-items:center;gap:10px;padding:11px 16px;cursor:pointer;
+.leva{display:flex;flex-direction:column;gap:8px}
+.leva+.leva{margin-top:10px}
+.sep{font-size:14px;font-weight:700;font-stretch:112%;color:var(--tinta);margin:4px 0 0}
+.sep.abrindo{color:var(--tinta3);font-weight:550}
+.r{background:var(--sup);border:1px solid var(--linha);border-radius:8px;overflow:hidden}
+.r>summary{display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;
   list-style:none;user-select:none}
 .r>summary::-webkit-details-marker{display:none}
-.r>summary:hover{background:var(--ac-soft)}
-.r .quem{font-weight:700;font-size:14px}
-.r .qual{font:11.5px ui-monospace,"Cascadia Code",monospace;color:var(--fg3);
+.r>summary:hover{background:var(--sup2)}
+.r .quem{font-weight:700;flex:none}
+.r .qual{font:12px ui-monospace,"Cascadia Code",monospace;color:var(--tinta3);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-.r .seg{font:11.5px ui-monospace,monospace;color:var(--fg2);flex:none;
-  font-variant-numeric:tabular-nums}
-.r .corpo{padding:0 16px 15px;font-size:13.5px;line-height:1.6;
-  white-space:pre-wrap;word-wrap:break-word;overflow-wrap:anywhere}
-.r .corpo pre{background:var(--off);border:1px solid var(--line);border-radius:12px;
-  padding:12px 14px;overflow:auto;margin:10px 0;white-space:pre;
-  font:12px/1.5 ui-monospace,"Cascadia Code",monospace}
-.r .corpo code{background:var(--off);border:1px solid var(--line);border-radius:5px;
-  padding:1px 5px;font:12px ui-monospace,"Cascadia Code",monospace}
-.r .corpo pre code{background:none;border:0;padding:0}
-/* Estado no proprio cartao: quem esta pensando, quem entregou, quem caiu. */
-.r.rodando{border-color:var(--line2)}
-.r.rodando .seg::after{content:" ."; animation:reticencia 1.2s steps(4) infinite}
+.r .seg{font-size:12.5px;color:var(--tinta2);flex:none;font-variant-numeric:tabular-nums}
+.r .corpo{padding:2px 14px 14px;font-size:14px;line-height:1.6;max-width:none;
+  white-space:pre-wrap;overflow-wrap:anywhere}
+.r .corpo pre{background:var(--bg);border:1px solid var(--linha);border-radius:6px;
+  padding:10px 12px;overflow:auto;margin:10px 0;white-space:pre;
+  font:12.5px/1.5 ui-monospace,"Cascadia Code",monospace}
+.r .corpo code{background:var(--bg);border-radius:3px;padding:1px 4px;
+  font:12.5px ui-monospace,"Cascadia Code",monospace}
+.r .corpo pre code{background:none;padding:0}
+.r.rodando .seg::after{content:" .";animation:reticencia 1.2s steps(4) infinite}
 @keyframes reticencia{0%{content:" ."}33%{content:" .."}66%{content:" ..."}}
-.r.falhou{border-color:rgba(190,60,60,.45)}
-.r.falhou .marca{background:linear-gradient(135deg,#7f1d1d,#dc2626);box-shadow:none}
-.r.falhou .corpo{color:#c23b3b;font-family:ui-monospace,"Cascadia Code",monospace;
-  font-size:12.5px}
-@media(prefers-color-scheme:dark){.r.falhou .corpo{color:#f2a0a0}}
+.r.falhou{border-color:var(--erro);box-shadow:inset 3px 0 0 var(--erro)}
+.r.falhou .corpo{color:var(--erro);font:12.5px/1.5 ui-monospace,"Cascadia Code",monospace}
 .pino{margin-left:auto;display:flex;gap:8px;align-items:center;flex:none}
-.copiar{font:600 11px inherit;padding:5px 11px;border-radius:999px;
-  background:transparent;border:1px solid var(--line2);color:var(--fg2);
-  box-shadow:none;cursor:pointer}
-.copiar:hover{border-color:var(--ac);color:var(--ac-txt);filter:none;transform:none}
-/* Linhas que o esquadrao imprime (plano do arquiteto, sintese do consenso). */
-.log{font:12px/1.55 ui-monospace,"Cascadia Code",monospace;color:var(--fg2);
-  background:var(--painel);border:1px dashed var(--line2);border-radius:14px;
-  padding:11px 15px;white-space:pre-wrap;word-wrap:break-word}
-.aviso{border-color:rgba(190,60,60,.5);color:#c23b3b}
+.copiar{font-size:12px;padding:4px 10px;background:transparent;color:var(--tinta2);
+  border:1px solid var(--linha2);font-weight:550}
+.log{font:12.5px/1.55 ui-monospace,"Cascadia Code",monospace;color:var(--tinta2);
+  background:var(--sup);border:1px dashed var(--linha2);border-radius:6px;padding:10px 14px;
+  white-space:pre-wrap;overflow-wrap:anywhere}
+.aviso{border:1px solid var(--erro);background:var(--erro-fundo);color:var(--erro)}
 
-/* --- rodape -------------------------------------------------------------- */
-.rodape{display:grid;grid-template-columns:auto auto auto minmax(0,1fr);gap:16px;
-  align-items:start;margin-top:18px;
-  background:var(--painel);border:1px solid var(--line);border-radius:var(--raio);
-  padding:20px;box-shadow:var(--sombra);
-  -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
-.campo{display:flex;flex-direction:column;gap:8px;min-width:0}
-.campo>span{font-size:10.5px;font-weight:800;letter-spacing:.12em;
-  text-transform:uppercase;color:var(--fg3)}
-.campo:nth-child(1)>span::before{content:"\25C8  "}
-.campo:nth-child(2)>span::before{content:"\25D0  "}
-.campo:nth-child(3)>span::before{content:"\2261  "}
-.campo select,.campo input{width:auto;min-width:136px;font-family:inherit;font-size:13px}
-.campo .dica{font-size:11.5px;color:var(--fg2);letter-spacing:0;text-transform:none;
-  max-width:40ch;font-style:normal;line-height:1.45;font-weight:400}
-.campo.mudo select,.campo.mudo input{opacity:.5}
+/* --- mesa de canais -------------------------------------------------------- */
+.mesa-topo{display:flex;align-items:baseline;justify-content:space-between;gap:12px;
+  margin:28px 0 10px;flex-wrap:wrap}
+h2{margin:0;font-size:20px;font-weight:720;font-stretch:118%}
+.filtro{display:flex;align-items:center;gap:8px;color:var(--tinta2);font-size:13.5px;cursor:pointer}
+.filtro input{accent-color:var(--on);width:15px;height:15px;margin:0}
+#lista{display:flex;flex-direction:column;gap:14px}
+/* Rota do arquiteto: quem assume cada especialidade com os canais ligados. */
+.mesa-topo p{margin:0;color:var(--tinta2);font-size:13px}
+#rota{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.esp{background:var(--sup);border:1px solid var(--linha);border-radius:8px;padding:10px 12px;min-width:0}
+.esp h4{margin:0 0 6px;font-size:11.5px;font-weight:650;color:var(--tinta2);
+  text-transform:uppercase;letter-spacing:.06em;display:flex;justify-content:space-between;gap:6px}
+.esp h4 small{font-weight:500;text-transform:none;letter-spacing:0;color:var(--tinta3)}
+.esp .lider{font-weight:720;font-size:14.5px;display:flex;justify-content:space-between;gap:8px}
+.esp .lider b{font-variant-numeric:tabular-nums}
+.esp .mod{color:var(--tinta3);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.esp ol{margin:6px 0 0;padding:6px 0 0;border-top:1px solid var(--linha);list-style:none;
+  font-size:12px;color:var(--tinta2);display:flex;flex-direction:column;gap:2px}
+.esp li{display:flex;justify-content:space-between;gap:8px;font-variant-numeric:tabular-nums}
+@media(max-width:860px){#rota{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* Um bloco por provedor: slots do mesmo provedor dividem conta e login, e e
+   isso que decide quanto custa ligar mais um. */
+.grupo{background:var(--sup);border:1px solid var(--linha);border-radius:8px;overflow:hidden}
+.grupo>header{display:flex;align-items:baseline;gap:6px 14px;flex-wrap:wrap;
+  padding:10px 14px;background:var(--sup2);border-bottom:1px solid var(--linha)}
+.grupo h3{margin:0;font-size:15px;font-weight:720;font-stretch:112%}
+.grupo header p{margin:0;color:var(--tinta2);font-size:13px}
+.grupo.vazio{display:none}
+.p{display:grid;grid-template-columns:22px 118px minmax(0,1fr) 290px 150px;align-items:center;
+  gap:14px;padding:9px 14px;border-top:1px solid var(--linha)}
+.grupo>header+.p{border-top:0}
+.p[hidden]{display:none}
+/* Lampada do canal: apagada = anel, acesa = verde com brilho. E o unico sinal
+   de "no lote" -- a linha desligada continua legivel, so o nome esmaece. */
+.at{appearance:none;-webkit-appearance:none;margin:0;width:18px;height:18px;border-radius:50%;
+  border:2px solid var(--linha2);background:transparent;cursor:pointer;
+  transition:background .15s,border-color .15s,box-shadow .15s}
+.at:checked{background:var(--on);border-color:var(--on);box-shadow:0 0 0 4px var(--on-brilho)}
+.at:hover{border-color:var(--tinta3)}
+.nome{font-weight:650;display:flex;align-items:baseline;gap:6px;min-width:0}
+.p.off .nome{color:var(--tinta3);font-weight:500}
+.p.off select,.p.off input[type=text]{color:var(--tinta3)}
+.mod{width:100%}
+.livre{width:100%;margin-top:5px}
 
-/* --- doca de acoes ------------------------------------------------------- */
-/* Gruda no fim da rolagem em vez de flutuar sempre por cima: a barra fixa
-   comia a ultima linha da lista e obrigava a reservar altura no body. */
-.acoes{position:sticky;bottom:16px;z-index:5;margin-top:18px;
-  background:var(--bar);border:1px solid var(--line);border-radius:var(--raio);
-  padding:14px 18px;box-shadow:var(--sombra);
-  -webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}
-.acoes .interno{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
-button{font:700 13.5px inherit;padding:11px 24px;border-radius:12px;border:0;
-  background:var(--grad);color:#fff;cursor:pointer;box-shadow:var(--sombra-btn);
-  transition:transform .12s ease,filter .12s ease}
-button:hover:not(:disabled){filter:brightness(1.1);transform:translateY(-1px)}
-button:active:not(:disabled){transform:none}
-button:focus-visible{outline:none;box-shadow:var(--anel)}
-button.sec{background:transparent;color:var(--fg2);border:1px solid var(--line2);
-  font-weight:600;box-shadow:none}
-button.sec:hover:not(:disabled){border-color:var(--ac);color:var(--ac-txt);filter:none}
-button:disabled{opacity:.5;cursor:default;transform:none;filter:none}
-.nota{color:var(--fg3);font-size:12px}
-.espaco{flex:1}
-#ok{color:var(--ok);font-size:12.5px;font-weight:800;opacity:0;transition:opacity .18s}
+/* O medidor de esforco: quatro segmentos que enchem da esquerda e esquentam
+   com o nivel. Numa coluna de 17 canais ligados, o vermelho aponta sozinho
+   quem esta gastando cota -- e a pergunta que o painel mais precisa responder. */
+.eff{display:grid;grid-template-columns:repeat(5,1fr);gap:3px}
+.eff label{cursor:pointer;min-width:0}
+.eff input{position:absolute;opacity:0;pointer-events:none}
+.eff span{display:block;height:26px;line-height:26px;text-align:center;font-size:11.5px;
+  font-weight:600;color:var(--tinta3);background:var(--bg);border-radius:3px;
+  transition:background .15s,color .15s}
+.eff label:hover span{color:var(--tinta)}
+.eff:has(input[value=low]:checked) label:nth-child(-n+1) span{background:var(--h1);color:var(--h-txt1)}
+.eff:has(input[value=medium]:checked) label:nth-child(-n+2) span{background:var(--h2);color:var(--h-txt2)}
+.eff:has(input[value=high]:checked) label:nth-child(-n+3) span{background:var(--h3);color:var(--h-txt3)}
+.eff:has(input[value=xhigh]:checked) label:nth-child(-n+4) span{background:var(--h4);color:var(--h-txt4)}
+.eff:has(input[value=max]:checked) label:nth-child(-n+5) span{background:var(--h4);color:var(--h-txt4)}
+.eff input:checked+span{font-weight:780}
+.eff input:focus-visible+span{box-shadow:var(--foco)}
+/* Canal desligado nao gasta nada: o medidor fica cinza. */
+.p.off .eff label span{background:var(--bg)!important;color:var(--tinta3)!important}
+.p.off .eff input:checked+span{box-shadow:inset 0 0 0 1px var(--linha2)}
+/* Nivel que nao existe neste provedor fica visivel e riscado: sumir esconderia
+   que ele existe, deixar clicavel prometeria o que nao acontece. */
+.eff input:disabled+span{cursor:not-allowed;color:var(--tinta3);
+  background:repeating-linear-gradient(135deg,transparent 0 4px,var(--linha) 4px 5px)!important}
+.eff.na span{background:var(--bg)!important;color:var(--tinta3)!important}
+.eff.na label{cursor:not-allowed}
+.na-nota{display:block;font-size:12px;color:var(--tinta3);margin-top:4px;font-style:normal}
+/* Nota e custo do que esta escolhido nesta linha -- o dado para decidir fica
+   ao lado da decisao, e muda no mesmo clique. */
+.dado{font-size:12.5px;color:var(--tinta2);line-height:1.35;font-variant-numeric:tabular-nums}
+.dado b{color:var(--tinta);font-weight:700;font-size:14px}
+.dado.sem{color:var(--tinta3)}
+
+/* --- barra de salvar ------------------------------------------------------- */
+.acoes{position:sticky;bottom:12px;z-index:5;margin-top:18px;display:flex;gap:12px 16px;
+  align-items:center;flex-wrap:wrap;background:var(--sup);border:1px solid var(--linha2);
+  border-radius:8px;padding:10px 14px;box-shadow:0 6px 20px -12px rgba(0,0,0,.35)}
+#ok{color:var(--on);font-weight:650;font-size:13px;opacity:0;transition:opacity .2s}
 #ok.v{opacity:1}
-#sujo{color:var(--fg2);font-size:12.5px}
+#sujo{color:var(--tinta);font-size:13px;font-weight:600}
+.nota{color:var(--tinta3);font-size:12.5px}
 
-@media(max-width:760px){
-  .p{grid-template-columns:38px 1fr;row-gap:12px}
-  .p>*:nth-child(3),.p>*:nth-child(4){grid-column:2}
-  .rodape{grid-template-columns:1fr}
-  h1{font-size:27px}}
-/* Quem pediu menos animacao nao recebe nenhuma - o canvas ja respeita isso
-   por conta propria; aqui vale para os cartoes e a doca. */
-@media(prefers-reduced-motion:reduce){
-  *{animation:none!important;transition:none!important}}
+@media(max-width:860px){
+  .p{grid-template-columns:22px minmax(0,1fr);row-gap:8px}
+  .p>*:nth-child(n+3){grid-column:2}
+  /* No celular a barra grudada cobria meia tela: vira o fim da pagina. */
+  .acoes{position:static}
+  h1{font-size:30px}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
-<canvas id=fundo aria-hidden=true></canvas>
+
 <div class=wrap>
-<header>
-  <div class=eyebrow>Claude &middot; painel</div>
-  <h1>Esquadr&atilde;o</h1>
-  <p>Quem entra no lote, com qual modelo e qual esfor&ccedil;o. Salvar escreve
-  <kbd>~/.claude/esquadrao.json</kbd> &mdash; o comando <kbd>esquadrao</kbd> e o
-  Claude leem de l&aacute;.</p>
-  <div class=chips>
-    <span class=chip id=c_lote></span>
-    <span class=chip id=c_modo></span>
-    <span class=chip id=c_juiz></span>
-    <span class=chip id=c_esf></span>
-    <span class=chip>127.0.0.1:8777</span>
-  </div>
+<header class=topo>
+  <h1>esquadrão</h1>
+  <p class=estado><span id=c_lote></span> <span id=c_esf></span></p>
 </header>
 
-<div class=console>
-  <textarea id=caixa rows=4 spellcheck=false
-    placeholder="Pergunte ao esquadr&atilde;o. A mesma pergunta vai para todos os provedores ligados abaixo, com o modo e o juiz escolhidos no rodap&eacute;."></textarea>
-  <div class=linha>
-    <button id=btrodar onclick=rodar()>Rodar esquadr&atilde;o</button>
+<section class=console aria-label="Pergunta">
+  <textarea id=caixa rows=4 spellcheck=false aria-label="Pergunta para o esquadrão"
+    placeholder="Escreva a pergunta. Ela vai para todos os canais ligados abaixo."></textarea>
+  <div class=comandos>
+    <label class=campo>Modo
+      <select id=modo><option>todos<option>refino<option>consenso<option>arquiteto</select></label>
+    <label class=campo>Juiz <select id=juiz></select></label>
+    <label class=campo id=campo_rodadas>Rodadas <input id=rodadas type=number min=1></label>
+    <span class=botoes>
+    <button id=btgratis class=sec onclick=so_gratis() title="Testa os modelos grátis agora, liga só os que responderem e usa o modo arquiteto para dar a cada um a tarefa em que ele é melhor.">Só grátis</button>
     <button id=btparar class=sec onclick=parar() hidden>Parar</button>
-    <button id=btlimpar class=sec onclick=limpar() hidden>Limpar</button>
-    <span class=dica-teclas><b>Ctrl+Enter</b> roda</span>
-    <span class=andamento id=andamento>
-      <span class=barra id=barra><i></i></span>
-      <span class=relogio id=relogio></span>
+    <button id=btlimpar class=sec onclick=limpar() hidden>Limpar respostas</button>
+    <button id=btrodar onclick=rodar() title="Ctrl+Enter">Enviar</button>
     </span>
   </div>
-</div>
+  <p class=dica id=dica_modo></p>
+  <div class=andamento id=andamento>
+    <span class=barra id=barra><i></i></span>
+    <span class=relogio id=relogio></span>
+  </div>
+</section>
 
 <div id=saida></div>
 
-<div class=grade>
-  <div class=cab><span></span><span>Provedor</span><span>Modelo</span><span>Esfor&ccedil;o</span></div>
+<section aria-label="Rota do arquiteto">
+  <div class=mesa-topo>
+    <h2>Rota do arquiteto</h2>
+    <p id=rota_fonte>Quem assume cada especialidade com os canais ligados agora.</p>
+  </div>
+  <div id=rota></div>
+</section>
+
+<section aria-label="Canais">
+  <div class=mesa-topo>
+    <h2>Canais</h2>
+    <label class=filtro><input type=checkbox id=soligados> Mostrar só os ligados</label>
+  </div>
   <div id=lista></div>
-</div>
+</section>
 
-<div class=rodape>
-  <label class=campo><span>Modo</span>
-    <select id=modo><option>todos<option>refino<option>consenso<option>arquiteto</select></label>
-  <label class=campo><span>Juiz</span><select id=juiz></select></label>
-  <label class=campo id=campo_rodadas><span>Rodadas</span>
-    <input id=rodadas type=number min=2 max=10></label>
-  <div class=campo><span>O que este modo faz</span><i class=dica id=dica_modo></i></div>
-</div>
-
-<div class=acoes><div class=interno>
-  <button id=btsalvar onclick=salvar()>Salvar</button>
-  <span id=ok>salvo &#10003;</span>
+<div class=acoes>
+  <button id=btsalvar onclick=salvar() title="Ctrl+S">Salvar</button>
+  <span id=ok>Salvo</span>
   <span id=sujo></span>
   <span class=espaco></span>
-  <button id=bat class=sec onclick=atualizar()>Atualizar modelos</button>
   <span class=nota id=carimbo></span>
-</div></div>
+  <button id=bat class=sec onclick=atualizar()>Atualizar modelos</button>
+</div>
 </div>
 
 <script>
-// --- fundo ------------------------------------------------------------------
-(function(){
-  var cv=document.getElementById('fundo'), cx=cv.getContext('2d'), pts=[], raf=0;
-  // Quem pediu menos animacao recebe o campo parado, desenhado uma vez so.
-  var parado=matchMedia('(prefers-reduced-motion: reduce)').matches;
-  function cor(){return getComputedStyle(document.documentElement)
-      .getPropertyValue('--ac-txt').trim()||'#7c3aed';}
-  function dimensiona(){
-    var dpr=Math.min(window.devicePixelRatio||1, 2);   // 2 ja basta; 3 so custa
-    var l=innerWidth, a=innerHeight;
-    cv.width=Math.round(l*dpr); cv.height=Math.round(a*dpr);
-    cv.style.width=l+'px'; cv.style.height=a+'px';
-    cx.setTransform(dpr,0,0,dpr,0,0);                  // desenha em px CSS
-    // Densidade por area, nao numero fixo: janela larga nao fica vazia.
-    var n=Math.round(Math.min(110, l*a/14000));
-    pts=[];
-    for(var i=0;i<n;i++) pts.push({x:Math.random()*l,y:Math.random()*a,
-      vx:(Math.random()-.5)*.12, vy:(Math.random()-.5)*.12,
-      r:Math.random()*1.3+.5});
-  }
-  function passo(){
-    var l=innerWidth, a=innerHeight, c=cor();
-    cx.clearRect(0,0,l,a);
-    for(var i=0;i<pts.length;i++){
-      var p=pts[i];
-      if(!parado){p.x+=p.vx; p.y+=p.vy;
-        if(p.x<0||p.x>l) p.vx*=-1;
-        if(p.y<0||p.y>a) p.vy*=-1;}
-      // Liga os vizinhos: a linha some com a distancia, entao o desenho
-      // respira sem precisar de brilho.
-      for(var j=i+1;j<pts.length;j++){
-        var q=pts[j], dx=p.x-q.x, dy=p.y-q.y, d=Math.hypot(dx,dy);
-        if(d<120){cx.globalAlpha=(1-d/120)*.13; cx.strokeStyle=c;
-          cx.lineWidth=.7; cx.beginPath(); cx.moveTo(p.x,p.y);
-          cx.lineTo(q.x,q.y); cx.stroke();}}
-      cx.globalAlpha=.5; cx.fillStyle=c;
-      cx.beginPath(); cx.arc(p.x,p.y,p.r,0,6.284); cx.fill();
-    }
-    cx.globalAlpha=1;
-    if(!parado) raf=requestAnimationFrame(passo);
-  }
-  function recomeca(){cancelAnimationFrame(raf); dimensiona(); passo();}
-  addEventListener('resize',recomeca);
-  // Arrastar a janela para um monitor de outra densidade muda o
-  // devicePixelRatio SEM disparar resize: o buffer continua no DPR antigo e o
-  // desenho sai borrado. Esta media query avisa; ela vale para um valor so,
-  // entao se reassina a cada mudanca.
-  (function vigia(){
-    matchMedia('(resolution: '+(window.devicePixelRatio||1)+'dppx)')
-      .addEventListener('change', function(){recomeca(); vigia();}, {once:true});
-  })();
-  // Aba escondida nao precisa animar: o laco para e volta sozinho.
-  document.addEventListener('visibilitychange',function(){
-    if(document.hidden) cancelAnimationFrame(raf); else if(!parado) passo();});
-  recomeca();
-})();
-
-const EFFORTS=__EFFORTS__, XHIGH=__XHIGH__, C=__CONFIG__, NOMES=__NOMES__, MODELOS=__MODELOS__,
-      TIPO=__TIPO__, QUANDO=__QUANDO__, EFEITO=__EFEITO__, RODANDO=__RODANDO__;
+const EFFORTS=__EFFORTS__, XHIGH=__XHIGH__, MAX=__MAX__, C=__CONFIG__, NOMES=__NOMES__, MODELOS=__MODELOS__, GRATIS=__GRATIS__,
+      TIPO=__TIPO__, QUANDO=__QUANDO__, EFEITO=__EFEITO__, RODANDO=__RODANDO__, NOTAS=__NOTAS__;
 const lista=document.getElementById('lista');
 
-// O que cada modo faz — dito na pagina pro campo Rodadas.
+// O que cada modo faz, dito ao lado do campo Rodadas.
 const EXPL={
-  todos:'Cada provedor responde sozinho; voce le as N respostas. Uma rodada. Rodadas nao se aplica.',
-  refino:'Independente -> critica cruzada -> consolidacao pelo juiz. Rodadas conta a consolidacao: 3 = 1 independente + 1 critica + consolidado.',
-  consenso:'Laco ate todos ratificarem a mesma sintese. Rodadas e o teto: se estourar, o que ficou em aberto E o resultado.',
-  arquiteto:'O juiz quebra o objetivo em 2 a 6 subtarefas, cada uma vai para o primeiro slot ATIVO da rota em perfis.json, rodam em ondas, o juiz consolida e revisa. Sem rodadas: o numero de etapas quem decide e o juiz.'};
+  todos:'Cada canal responde sozinho, sem juiz. Rodadas repete a pergunta do zero: a rodada 2 não vê a 1.',
+  refino:'Respostas independentes, crítica cruzada e consolidação pelo juiz. Rodadas conta a consolidação: 3 = independente + crítica + consolidado; 1 = independente + consolidado.',
+  consenso:'Repete até todos ratificarem a mesma síntese. Rodadas é o teto: se estourar, o que ficou em aberto é o resultado.',
+  arquiteto:'O juiz divide o pedido em 2 a 6 etapas. Cada etapa vai para o canal ligado com a melhor nota naquela tarefa, e o juiz consolida. Rodadas = 1 entrega sem a revisão final.'};
+
+// Provedor = conta. A frase diz o que ligar mais um canal dali custa.
+const GRUPOS=[
+  ['claude','Cota da assinatura Claude, a mesma desta sessão.'],
+  ['agy','Conta Google. Não gasta nada além do login.'],
+  ['commandcode','Cota semanal. Só o Muse Spark contributor e o space-bunny.'],
+  ['opencode','Modelos grátis da Zen. Fila no horário de pico.'],
+  ['openrouter','Modelos grátis e saldo da OpenRouter.']];
+const base=function(n){return n.replace(/\d+$/,'');};
+const blocos={};
+GRUPOS.forEach(function(g){
+  var s=document.createElement('section'); s.className='grupo';
+  s.innerHTML='<header><h3>'+g[0]+'</h3><p>'+g[1]+'</p></header>';
+  blocos[g[0]]=s; lista.appendChild(s);});
+function bloco_de(n){
+  var b=base(n);
+  if(!blocos[b]){var s=document.createElement('section'); s.className='grupo';
+    s.innerHTML='<header><h3>'+b+'</h3></header>'; blocos[b]=s; lista.appendChild(s);}
+  return blocos[b];
+}
+
+// Nota e custo por tarefa do modelo+esforco escolhidos (Artificial Analysis).
+const ORDEM=['low','medium','high','xhigh','max'];
+// agy: xhigh depende do modelo (20/11/2026: so Neon e Hydrogen aceitam).
+const XHIGH_AGY=/^gemini-4-(neon|hydrogen)$/;
+// Orchestrator recusa --effort: planeja e entrega a execucao ao Hydrogen high.
+const ORQ=/orchestrator/;
+function medida(n,m,e){
+  var b=base(n), cand=NOTAS.filter(function(x){return x[0].indexOf(b)>=0&&m.indexOf(x[1])>=0;});
+  if(!cand.length) return null;
+  var exato=cand.filter(function(x){return x[2]===e;})[0];
+  if(exato) return exato;
+  var sem=cand.filter(function(x){return ORDEM.indexOf(x[2])<0;})[0];
+  if(sem) return sem;
+  // Esforco sem medicao: o mais proximo abaixo; sem nada abaixo, o mais baixo medido.
+  var alvo=ORDEM.indexOf(e);
+  cand.sort(function(a,b){return ORDEM.indexOf(a[2])-ORDEM.indexOf(b[2]);});
+  var abaixo=cand.filter(function(x){return ORDEM.indexOf(x[2])<=alvo;});
+  return abaixo.length?abaixo[abaixo.length-1]:cand[0];
+}
+// Nota de um canal, com o motivo quando ela vem emprestada de outra linha:
+// agy servindo Claude (effort no nome) usa a medicao do proprio Claude, e o
+// Orchestrator usa a do Hydrogen high, que executa o plano dele.
+function nota_de(n,m,e){
+  var x=medida(n,m,e); if(x) return [x,''];
+  var c=base(n)==='agy'&&m.match(/^(claude-.+)-(low|medium|high)$/);
+  if(c&&(x=medida('claude',c[1],c[2]))) return [x,''];
+  if(ORQ.test(m)&&(x=medida(n,'gemini-4-hydrogen','high'))) return [x,'do executor'];
+  return [null,''];
+}
+function reais(v){return v.toFixed(2).replace('.',',');}
 
 for(const n of NOMES){
   const c=C.provedores[n]||{ativo:false,effort:'low',modelo:''};
   const d=document.createElement('div');
   d.className='p'+(c.ativo?'':' off'); d.dataset.n=n;
   d.innerHTML='<input type=checkbox class=at '+(c.ativo?'checked':'')
-      +' aria-label="'+n+' no lote">'
-    +'<span class=nome><i class=marca>'+n[0]+'</i>'+n+'<i class=tag>'+(TIPO[n]||'')+'</i></span>'
+      +' aria-label="'+n+' ligado">'
+    +'<span class=nome>'+n+'</span>'
     +'<span><select class=mod aria-label="modelo de '+n+'"></select>'
     +'<input type=text class=livre spellcheck=false hidden placeholder="nome do modelo"></span>'
-    +'<span><span class=eff>'+EFFORTS.map(function(e){
+    +'<span><span class=eff role=radiogroup aria-label="esforço de '+n+'">'+EFFORTS.map(function(e){
         return '<label><input type=radio name=e_'+n+' value="'+e+'"'
              +(c.effort===e?' checked':'')+'><span>'+e+'</span></label>';}).join('')
-    +'</span><i class=na-nota></i></span>';
+    +'</span><i class=na-nota></i></span>'
+    +'<span class=dado></span>';
 
   d.querySelector('.at').onchange=function(ev){
-    d.classList.toggle('off',!ev.target.checked); resumo(); sujou();};
+    d.classList.toggle('off',!ev.target.checked); filtra(); resumo(); sujou();};
 
-  var sel=d.querySelector('.mod'), livre=d.querySelector('.livre');
-  var conhecidos=MODELOS[n]||[], atual=c.modelo||conhecidos[0]||'';
-  var sabido=conhecidos.indexOf(atual)>=0;
+  let sel=d.querySelector('.mod'), livre=d.querySelector('.livre');
+  let conhecidos=MODELOS[n]||[], atual=c.modelo||conhecidos[0]||'';
+  let sabido=conhecidos.indexOf(atual)>=0;
   sel.innerHTML=conhecidos.map(function(m){
-      return '<option'+(m===atual?' selected':'')+'>'+m+'</option>';}).join('')
+      return '<option value="'+m+'"'+(m===atual?' selected':'')+'>'+(base(n)==='commandcode'&&GRATIS.indexOf(m)>=0?'grátis: ':'')+m+'</option>';}).join('')
     +'<option value="__outro__"'+(sabido?'':' selected')+'>outro…</option>';
-  if(!sabido) livre.value=atual;
-  // Onde o effort nao chega no provedor, a coluna fica travada e diz por que.
-  // No agy ele e sufixo do nome e SO a familia gemini aceita — por isso a
-  // checagem depende do modelo escolhido, nao so do provedor.
-  var eff=d.querySelector('.eff'), nota=d.querySelector('.na-nota');
-  var vale=function(m){
-    if(EFEITO[n]==='nunca') return 'este wrapper descarta o esforço';
+  if(!sabido){livre.value=atual; livre.dataset.salvo=atual;}
+  // Onde o esforco nao chega no provedor, o medidor trava e diz por que. No agy
+  // so a familia gemini aceita -- depende do modelo, nao so do provedor.
+  let eff=d.querySelector('.eff'), nota=d.querySelector('.na-nota'), dado=d.querySelector('.dado');
+  let vale=function(m){
+    if(EFEITO[n]==='nunca') return 'este provedor ignora o esforço';
     if(EFEITO[n]==='gemini'){
+      if(ORQ.test(m)) return 'o Orchestrator escolhe o esforço sozinho';
       if(/-(low|medium|high)$/.test(m)) return 'o esforço já está no nome do modelo';
-      return m.indexOf('gemini-')===0 ? null : 'o esforço já vem no nome deste modelo';}
+      return m.indexOf('gemini-')===0 ? null : 'este modelo já vem com o esforço fixo';}
     return null;};
-  var sync=function(){
+  let mostra_dado=function(m){
+    var e=(eff.querySelector('input:checked')||{}).value||'low';
+    var nd=nota_de(n,m,e), x=nd[0], herdada=!!nd[1];
+    if(!x){dado.className='dado sem'; dado.textContent='sem medição pública'; return;}
+    var perto=ORDEM.indexOf(x[2])>=0&&x[2]!==e&&!eff.classList.contains('na');
+    dado.className='dado';
+    dado.innerHTML='nota <b>'+x[3]+'</b>'+(herdada?' <span title="Sem medição própria: nota do Hydrogen high, que executa o plano.">do executor</span>':perto?' <span title="Não há medição neste esforço; este é o valor mais próximo.">medida em '+x[2]+'</span>':'')
+      +'<br>'+(x[4]==null?'custo não medido':'US$ '+reais(x[4])+' por tarefa');};
+  let sync=function(){
     var o=sel.value==='__outro__'; livre.hidden=!o;
     var m=o?livre.value:sel.value;
-    var motivo=vale(m);
-    var travado=motivo!==null;
+    var motivo=vale(m), travado=motivo!==null;
     eff.classList.toggle('na',travado);
-    // O xhigh nao existe em todo provedor: em vez de sumir com a opcao (o que
-    // esconderia que ela existe), ela fica visivel e apagada so onde nao vale.
-    var temX=XHIGH.indexOf(n)>=0;
+    // xhigh nao existe em todo provedor: fica visivel e riscado onde nao vale.
+    var temX=XHIGH.indexOf(n)>=0||(base(n)==='agy'&&XHIGH_AGY.test(m)), temM=MAX.indexOf(n)>=0;
     Array.prototype.forEach.call(eff.querySelectorAll('input'),function(i){
-      i.disabled=travado||(i.value==='xhigh'&&!temX);
-      // Config salva com xhigh num provedor que nao aceita cairia numa chamada
-      // recusada: reancora no high, que todos que usam effort aceitam.
-      if(i.disabled&&i.checked&&i.value==='xhigh'){
+      i.disabled=travado||(i.value==='xhigh'&&!temX)||(i.value==='max'&&!temM);
+      // Config salva num degrau que o provedor nao aceita cairia numa chamada
+      // recusada: reancora no maior degrau aceito (xhigh ou high).
+      if(i.disabled&&!travado&&i.checked){
         i.checked=false;
-        var alto=eff.querySelector('input[value=high]'); if(alto) alto.checked=true;}});
-    nota.textContent=travado?motivo:(temX?'':'xhigh indisponível neste provedor');
+        var alto=eff.querySelector('input[value='+(temX?'xhigh':'high')+']'); if(alto) alto.checked=true;}});
+    // Modelo salvo que sumiu da lista do provedor: avisa em vez de esconder no "outro…".
+    var sumiu=o&&m&&MODELOS[n]&&MODELOS[n].length&&livre.dataset.salvo===m;
+    nota.textContent=travado?motivo:sumiu?'não está mais na lista do provedor':'';
+    [['xhigh',temX],['max',temM]].forEach(function(p){
+      var b=eff.querySelector('input[value='+p[0]+']');
+      if(b&&b.nextElementSibling) b.nextElementSibling.title=p[1]?'':p[0]+' não existe neste modelo';});
+    mostra_dado(m);
     resumo();};
   sel.onchange=function(){sync();sujou();};
   livre.oninput=function(){sync();sujou();};
-  eff.onchange=function(){resumo();sujou();};
+  eff.onchange=function(){sync();sujou();};
   sync();
-  lista.appendChild(d);
+  bloco_de(n).appendChild(d);
 }
 
+// Juiz: qualquer canal, ligado ou nao. O texto da opcao diz o modelo, o
+// esforco e a nota que aquele canal tem agora -- escolher "claude" sem saber
+// que ali esta o Opus em low era escolher no escuro.
 juiz.innerHTML=NOMES.map(function(n){
-  return '<option'+(n===C.juiz?' selected':'')+'>'+n+'</option>';}).join('');
+  return '<option value="'+n+'"'+(n===(C.juiz||'claude')?' selected':'')+'>'+n+'</option>';}).join('');
+function pinta_juiz(){
+  var e=estado();
+  Array.prototype.forEach.call(juiz.options,function(o){
+    var c=e.provedores[o.value]; if(!c) return;
+    var x=nota_de(o.value,c.modelo,c.effort)[0];
+    var na=document.querySelector('[data-n="'+o.value+'"] .eff.na');
+    o.textContent=o.value+': '+c.modelo.split('/').pop()+(na?'':', '+c.effort)+(x?', nota '+x[3]:'');});
+}
 modo.value=C.modo; rodadas.value=C.rodadas;
-carimbo.textContent='modelos lidos dos provedores em '+QUANDO;
+carimbo.textContent='Modelos lidos dos provedores em '+QUANDO.replace('T',' às ').slice(0,-3)+'.';
 
+function linhas(){return lista.querySelectorAll('.p');}
 function estado(){
   var provedores={};
-  Array.prototype.forEach.call(lista.children,function(d){
+  Array.prototype.forEach.call(linhas(),function(d){
     var n=d.dataset.n, sel=d.querySelector('.mod');
     var marcado=d.querySelector('input[name=e_'+n+']:checked');
     provedores[n]={ativo:d.querySelector('.at').checked,
@@ -508,47 +462,88 @@ function estado(){
   return {provedores:provedores,modo:modo.value,juiz:juiz.value,rodadas:+rodadas.value};
 }
 
-// Resumo ao vivo: o cabecalho responde a cada clique, sem precisar salvar.
+// "Mostrar so os ligados": 30 canais viram os que de fato vao rodar.
+function filtra(){
+  var so=soligados.checked;
+  Array.prototype.forEach.call(linhas(),function(d){d.hidden=so&&d.classList.contains('off');});
+  Object.keys(blocos).forEach(function(b){
+    blocos[b].classList.toggle('vazio',!blocos[b].querySelector('.p:not([hidden])'));});
+}
+try{soligados.checked=localStorage.getItem('esq_soligados')==='1';}catch(e){}
+soligados.onchange=function(){filtra();try{localStorage.setItem('esq_soligados',soligados.checked?'1':'0');}catch(e){}};
+
+// Resumo ao vivo: responde a cada clique, sem precisar salvar.
+var ligados=0;
 function resumo(){
-  // Roda tambem no meio da montagem da lista (cada linha chama sync -> resumo),
-  // entao so conta o que ja existe no DOM: NOMES ainda tem provedor sem linha.
   var e=estado(), postos=Object.keys(e.provedores);
   var ativos=postos.filter(function(n){return e.provedores[n].ativo;});
-  c_lote.innerHTML='<b>'+ativos.length+'</b> de '+NOMES.length+' no lote';
-  c_modo.innerHTML='modo <b>'+e.modo+'</b>';
-  c_juiz.innerHTML='juiz <b>'+e.juiz+'</b>';
-  // So conta o esforco de quem esta no lote E cujo wrapper repassa: e o unico
-  // numero honesto sobre quanto este lote vai puxar.
+  ligados=ativos.length;
+  c_lote.innerHTML='<b>'+ativos.length+'</b> de '+NOMES.length+' canais ligados.';
+  // So conta quem esta ligado E cujo provedor repassa o esforco.
   var pesa=ativos.filter(function(n){
-    return !document.querySelector('[data-n='+n+'] .eff').classList.contains('na');});
+    var q=document.querySelector('[data-n="'+n+'"] .eff');
+    return q&&!q.classList.contains('na');});
   var alto=pesa.filter(function(n){
-    return ['high','xhigh'].indexOf(e.provedores[n].effort)>=0;}).length;
-  c_esf.innerHTML='esforço alto em <b>'+alto+'</b> de '+pesa.length;
-  c_esf.className='chip'+(alto?' forte':'');
+    return ['high','xhigh','max'].indexOf(e.provedores[n].effort)>=0;}).length;
+  c_esf.innerHTML=alto?'Esforço alto em <b>'+alto+'</b>.':'';
+  if(!emCurso) rotulo();
+  pinta_juiz();
+  pinta_rota();
+}
+function rotulo(){
+  btrodar.textContent=ligados?'Enviar para '+ligados+(ligados===1?' canal':' canais'):'Ligue um canal';
+  btrodar.disabled=!ligados;
 }
 function pinta_modo(){
-  var usa_rodadas=modo.value==='consenso'||modo.value==='refino';
-  campo_rodadas.classList.toggle('mudo',!usa_rodadas);
-  rodadas.disabled=!usa_rodadas;
+  if(+rodadas.value<1) rodadas.value=1;
+  campo_rodadas.classList.remove('mudo');
+  rodadas.disabled=false;
   dica_modo.textContent=EXPL[modo.value]||'';
 }
 modo.onchange=function(){pinta_modo();resumo();sujou();};
 juiz.onchange=function(){resumo();sujou();};
 rodadas.oninput=sujou;
 
-// Salvar so acende quando ha mudanca pendente: botao sempre vivo nao diz nada.
+// Salvar so acende com mudanca pendente: botao sempre vivo nao diz nada.
 var limpo=JSON.stringify(estado());
+// Previa da rota: o servidor calcula com o mesmo codigo do modo arquiteto.
+var ESP={codigo:['Código','Terminal-Bench + FrontierCode'],raciocinio:['Raciocínio','HLE'],
+  dados:['Dados','GDP-PDF'],pesquisa:['Pesquisa','Omniscience'],geral:['Geral','Intelligence Index'],
+  frontend:['Frontend','WebDev Arena (Elo)'],texto:['Texto','Text Arena (Elo)'],visao:['Visão','Vision Arena (Elo)']};
+var t_rota=null;
+function pinta_rota(){
+  clearTimeout(t_rota);
+  t_rota=setTimeout(function(){
+    var e=estado();
+    fetch('/rota',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({provedores:e.provedores})}).then(function(r){return r.json();})
+    .then(function(d){
+      var esc=function(s){return String(s).replace(/[&<>"]/g,function(c){return '&#'+c.charCodeAt(0)+';';});};
+      var nt=function(v){return v==null?'—':(v>200?Math.round(v):v.toFixed(1).replace('.',','));};
+      var mod=function(n){var c=e.provedores[n]||{}, na=document.querySelector('[data-n="'+n+'"] .eff.na');
+        return (c.modelo||'').split('/').pop()+(c.effort&&!na?' · '+c.effort:'');};
+      rota.innerHTML=Object.keys(ESP).filter(function(k){return d[k];}).map(function(k){
+        var l=d[k], p=l[0];
+        if(!p) return '<div class=esp><h4>'+ESP[k][0]+'</h4><div class=mod>nenhum canal ligado</div></div>';
+        return '<div class=esp title="'+esc(ESP[k][1])+'"><h4>'+ESP[k][0]+'<small>'+esc(ESP[k][1])+'</small></h4>'
+          +'<div class=lider><span>'+esc(p[0])+'</span><b>'+nt(p[1])+'</b></div>'
+          +'<div class=mod>'+esc(mod(p[0]))+'</div>'
+          +(l.length>1?'<ol>'+l.slice(1).map(function(x){return '<li><span>'+esc(x[0])+'</span><span>'+nt(x[1])+'</span></li>';}).join('')+'</ol>':'')
+          +'</div>';}).join('');
+    }).catch(function(){rota.innerHTML='';});
+  },250);
+}
 function sujou(){
   var mudou=JSON.stringify(estado())!==limpo;
   btsalvar.disabled=!mudou;
-  sujo.textContent=mudou?'alterações não salvas':'';
+  sujo.textContent=mudou?'Alterações não salvas.':'';
   if(mudou) ok.className='';
 }
 function atualizar(){
-  bat.disabled=true; bat.textContent='consultando provedores…';
+  bat.disabled=true; bat.textContent='Consultando provedores…';
   fetch('/modelos',{method:'POST'}).then(function(r){return r.json();})
     .then(function(){location.reload();})
-    .catch(function(){bat.disabled=false;bat.textContent='falhou — tentar de novo';});
+    .catch(function(){bat.disabled=false;bat.textContent='Falhou. Tentar de novo';});
 }
 function salvar(){
   var e=estado();
@@ -558,28 +553,22 @@ function salvar(){
       ok.className='v'; setTimeout(function(){ok.className='';},1800);});
 }
 
-// --- console: rodar o esquadrao pela pagina ---------------------------------
+// --- rodar o esquadrao pela pagina -----------------------------------------
 //
 // A pagina nao decide nada sobre o lote: manda o estado que esta na tela e o
 // servidor chama as mesmas funcoes do esquadrao.py que o terminal chamaria.
-// O que chega de volta e um fluxo de eventos (SSE), um por provedor, no
-// instante em que cada um termina — esperar o lote inteiro para so entao
-// mostrar tudo seria minutos de tela parada.
+// Volta um fluxo de eventos (SSE), um por canal, no instante em que termina.
 var fonte=null, emCurso=false, t0=0, tique=null, esperados=0, prontos=0, leva=null;
-// Ultimo id de evento aplicado. O EventSource reconecta sozinho ao cair, e sem
-// esta guarda o historico reenviado entrava de novo e a pagina duplicava tudo.
+// Ultimo id aplicado: o EventSource reconecta sozinho e reenvia o historico.
 var visto=0;
-// Lote reatado comeca com o relogio errado (zero = agora, e nao o inicio real
-// la no servidor). O primeiro evento traz `t`, os segundos ja decorridos, e e
-// com ele que o zero e reposicionado -- uma vez so.
+// Lote reatado: o primeiro evento traz `t` e reposiciona o zero do relogio.
 var calibrar=false;
 
 function esc(t){return t.replace(/[&<>]/g,function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
 
-// Marcacao minima e de proposito: bloco ``` e `codigo`. Modelo devolve muito
-// bloco de codigo, e sem isso a indentacao vira sopa; o resto do markdown nao
-// paga o risco de reescrever o texto do modelo.
+// Marcacao minima: bloco ``` e `codigo`. O resto do markdown nao paga o risco
+// de reescrever o texto do modelo.
 function corpo(t){
   var partes=esc(t).split(/```/), out='';
   for(var i=0;i<partes.length;i++){
@@ -595,47 +584,40 @@ function relogio_liga(quando){
   tique=setInterval(function(){
     var s=Math.max(0,Math.round((Date.now()-t0)/1000));
     relogio.textContent=String((s/60)|0).padStart(2,'0')+':'+String(s%60).padStart(2,'0')
-      +(esperados?'  ·  '+prontos+'/'+esperados:'  ·  '+prontos+' de volta');
+      +(esperados?', '+prontos+' de '+esperados+' responderam':', '+prontos+' responderam');
   },250);
 }
 
-// Quantos provedores esta rodada espera: conta os cartoes da leva aberta, em
-// vez de repetir o total da primeira. A consolidacao tem UMA chamada — mostrar
-// "1 de 3" ali seria progresso de uma rodada que nao esta acontecendo.
+// Quantos canais esta rodada espera: conta os cartoes da leva aberta. A
+// consolidacao tem UMA chamada -- "1 de 3" ali seria progresso falso.
 function recalibra(){
   if(!leva){esperados=0;prontos=0;return;}
-  var cartoes=leva.querySelectorAll('.r');
-  esperados=cartoes.length;
+  esperados=leva.querySelectorAll('.r').length;
   prontos=leva.querySelectorAll('.r:not(.rodando)').length;
   if(!barra.classList.contains('indef'))
     barra.firstElementChild.style.width=(esperados?prontos/esperados*100:0)+'%';
 }
 
 // Uma leva por rodada, aberta ANTES das respostas: o titulo definitivo so
-// chega quando a rodada fecha, e sem o container ele apareceria embaixo das
-// proprias respostas que nomeia.
+// chega quando a rodada fecha.
 function nova_leva(titulo){
   leva=document.createElement('div');
   leva.className='leva';
-  var h=document.createElement('div');
-  h.className='sep abrindo'; h.textContent=titulo||'respondendo…';
+  var h=document.createElement('h3');
+  h.className='sep abrindo'; h.textContent=titulo||'Respondendo…';
   leva.appendChild(h); saida.appendChild(leva);
   return leva;
 }
 
-// Busca presa a leva atual: no refino o mesmo provedor responde em toda
-// rodada, e uma busca global faria a rodada 2 sobrescrever a resposta da 1.
-// Um cartao e uma CHAMADA, nao um provedor. So reaproveita o que ainda esta
-// pendente: no arquiteto o juiz fala duas vezes na mesma fase (decompoe e
-// consolida), e reaproveitar por nome fazia a segunda resposta APAGAR a
-// primeira -- o plano sumia da tela sem deixar rastro.
+// Um cartao e uma CHAMADA, nao um canal: no arquiteto o juiz fala duas vezes
+// na mesma fase, e reaproveitar por nome apagava o plano.
 function cartao(n){
   if(!leva) nova_leva();
   var d=leva.querySelector('.r.rodando[data-n="'+n+'"]');
   if(d) return d;
   d=document.createElement('details');
   d.className='r rodando'; d.dataset.n=n; d.open=true;
-  d.innerHTML='<summary><i class=marca>'+esc(n[0])+'</i>'
+  d.innerHTML='<summary>'
     +'<span class=quem>'+esc(n)+'</span><span class=qual></span>'
     +'<span class=pino><span class=seg>pensando</span></span></summary>'
     +'<div class=corpo></div>';
@@ -646,44 +628,35 @@ function cartao(n){
 function bloco(cls,txt){
   var d=document.createElement('div');
   d.className=cls; d.textContent=txt;
-  // Abre leva se nao houver: no arquiteto o plano e as etapas sao SO texto, e
-  // soltos no topo eles ficavam fora da fase que os nomeia.
   if(!leva&&cls==='log') nova_leva();
   (cls==='log'?leva:saida).appendChild(d); rola();
 }
-// Segue o fim da saida so enquanto o usuario ja estiver la embaixo: puxar a
-// rolagem de quem esta lendo uma resposta antiga e roubar o controle dele.
+// Segue o fim da saida so se o usuario ja estiver la embaixo.
 function rola(){
   var perto=innerHeight+scrollY > document.body.scrollHeight-260;
   if(perto) scrollTo({top:document.body.scrollHeight,behavior:'smooth'});
 }
 
+// Titulos de rodada vem do esquadrao.py em caixa alta ("RODADA 1 — ...").
+function titulo(t){return t.charAt(0)+t.slice(1).toLowerCase();}
+
 function evento(e){
-  // Reconexao reenvia o que ja passou: aplica so o que e novo.
   if(e.i){ if(e.i<=visto) return; visto=e.i; }
   if(e.tipo==='comecou'){
     esperados=e.nomes.length; prontos=0;
     barra.classList.toggle('indef', e.modo==='consenso'||e.modo==='arquiteto');
-    // Nao pre-cria leva nem cartao: o evento 'inicio' de cada provedor chega
-    // no mesmo instante (em_paralelo dispara todos juntos) e ja monta o
-    // cartao no lugar certo. Pre-criar deixava uma leva orfa por lote, com
-    // cartoes eternamente "pensando" que rodada nenhuma preenchia.
   }
   else if(e.tipo==='rodada'){
-    // A rodada ACABOU de fechar: batiza a leva aberta e recolhe os cartoes
-    // dela, para a proxima entrar com a tela limpa. A leva seguinte nasce na
-    // primeira resposta que chegar.
-    if(!leva) nova_leva();          // fase so de texto (plano, etapas) tambem
-    {                               // merece titulo em vez de sumir calada
-      var h=leva.querySelector('.sep');
-      h.textContent=e.titulo; h.className='sep';
-      Array.prototype.forEach.call(leva.querySelectorAll('.r'),function(d){d.open=false;});
-    }
+    // A rodada fechou: batiza a leva e recolhe os cartoes dela.
+    if(!leva) nova_leva();
+    var h=leva.querySelector('.sep');
+    h.textContent=titulo(e.titulo); h.className='sep';
+    Array.prototype.forEach.call(leva.querySelectorAll('.r'),function(d){d.open=false;});
     leva=null; esperados=0; prontos=0; rola();
   }
   else if(e.tipo==='inicio'){
     var d=cartao(e.nome); d.className='r rodando';
-    d.querySelector('.qual').textContent=e.modelo+(e.effort?'  ['+e.effort+']':'');
+    d.querySelector('.qual').textContent=e.modelo+(e.effort?', '+e.effort:'');
     d.querySelector('.seg').textContent='pensando';
     d.querySelector('.corpo').textContent='';
     recalibra();
@@ -691,14 +664,14 @@ function evento(e){
   else if(e.tipo==='resposta'){
     var d=cartao(e.nome);
     d.className='r'+(e.ok?'':' falhou');
-    d.querySelector('.seg').textContent=Math.round(e.seg)+'s';
+    d.querySelector('.seg').textContent=Math.round(e.seg)+' s';
     d.querySelector('.corpo').innerHTML=corpo(e.texto);
     if(!d.querySelector('.copiar')){
       var b=document.createElement('button');
-      b.className='copiar'; b.textContent='copiar';
+      b.className='copiar'; b.textContent='Copiar';
       b.onclick=function(ev){ev.preventDefault();ev.stopPropagation();
         navigator.clipboard.writeText(e.texto);
-        b.textContent='copiado'; setTimeout(function(){b.textContent='copiar';},1400);};
+        b.textContent='Copiado'; setTimeout(function(){b.textContent='Copiar';},1400);};
       d.querySelector('.pino').appendChild(b);
     }
     recalibra();
@@ -706,23 +679,17 @@ function evento(e){
   }
   else if(e.tipo==='log'){
     var t=(e.texto||'').trim();
-    // O cabecalho de rodada ja virou separador; repetir a moldura de '=' aqui
-    // so empurraria a resposta para fora da tela.
-    // Molduras de terminal ('====' e '####') nao dizem nada numa pagina que ja
-    // tem separador visual; cortam so elas, nunca o texto ao lado.
+    // Molduras de terminal ('====', '####') nao dizem nada aqui.
     if(t&&!/^[=#]+$/.test(t)&&t.indexOf('====')<0&&t.indexOf('####')<0)
       bloco('log',t);
   }
   else if(e.tipo==='fim'){
-    // O consenso termina imprimindo a sintese, sem passar por `mostra` — a
-    // leva aberta ficaria com o titulo provisorio ("respondendo…") justamente
-    // no bloco que carrega o resultado.
+    // O consenso termina imprimindo a sintese sem passar por `mostra`.
     if(leva&&leva.querySelector('.sep.abrindo')){
-      var h=leva.querySelector('.sep'); h.className='sep';
-      h.textContent='RESULTADO';
+      var h=leva.querySelector('.sep'); h.className='sep'; h.textContent='Resultado';
     }
-    if(e.erro) bloco('log aviso','falhou: '+e.erro);
-    if(e.parado) bloco('log','parado a pedido — o que ja tinha voltado esta acima.');
+    if(e.erro) bloco('log aviso','O lote parou com erro: '+e.erro);
+    if(e.parado) bloco('log','Parado. O que já tinha voltado está acima.');
     termina();
   }
 }
@@ -733,21 +700,24 @@ function termina(){
   clearInterval(tique);
   Array.prototype.forEach.call(saida.querySelectorAll('.r.rodando'),function(d){
     d.className='r falhou';
-    d.querySelector('.seg').textContent='—';
+    d.querySelector('.seg').textContent='sem resposta';
     if(!d.querySelector('.corpo').textContent)
-      d.querySelector('.corpo').textContent='nao chegou a responder';});
-  btrodar.disabled=false; btrodar.textContent='Rodar esquadrão';
-  btparar.hidden=true; btlimpar.hidden=false;
+      d.querySelector('.corpo').textContent='Este canal não respondeu antes do fim do lote.';});
+  rotulo();
+  btparar.hidden=true; btlimpar.hidden=!saida.children.length;
   caixa.disabled=false; andamento.classList.remove('v');
 }
 
-// Lote vivo quando a pagina abriu (recarga no meio, ou outra aba): reata em
-// vez de deixar a tela muda enquanto o servidor segue trabalhando.
+function em_andamento(){
+  emCurso=true; btrodar.disabled=true; btrodar.textContent='Enviando…';
+  btparar.hidden=false; btlimpar.hidden=true; caixa.disabled=true;
+  andamento.classList.add('v');
+}
+
+// Lote vivo quando a pagina abriu (recarga no meio, outra aba): reata.
 function reata(){
   if(!RODANDO) return;
-  emCurso=true; btrodar.disabled=true; btrodar.textContent='rodando…';
-  btparar.hidden=false; btlimpar.hidden=true; caixa.disabled=true;
-  andamento.classList.add('v'); barra.classList.add('indef');
+  em_andamento(); barra.classList.add('indef');
   saida.innerHTML=''; leva=null; visto=0; esperados=0; prontos=0;
   calibrar=true; relogio_liga();
   escuta();
@@ -757,55 +727,82 @@ function escuta(){
   fonte=new EventSource('/eventos');
   fonte.onmessage=function(m){
     var e=JSON.parse(m.data);
-    // Cada evento diz quantos segundos de lote ja tinham passado quando
-    // aconteceu: num lote reatado e assim que o relogio acha o zero certo.
     if(calibrar&&typeof e.t==='number'){calibrar=false; relogio_liga(Date.now()-e.t*1000);}
     evento(e);};
   fonte.onerror=function(){
-    // CLOSED quer dizer que o EventSource desistiu de vez -- e ele so desiste
-    // quando o servidor responde 204, que e exatamente como o painel diz "nao
-    // ha mais lote". Fechar a vista aqui evita a pagina ficar eternamente em
-    // "rodando…" caso o evento de fim tenha se perdido na queda.
+    // CLOSED = o servidor respondeu 204, que e como o painel diz "nao ha mais
+    // lote". Fechar aqui evita a pagina presa em "Enviando…".
     if(fonte&&fonte.readyState===2){ termina(); return; }
-    // Qualquer outro erro com lote vivo: ele reconecta sozinho e retoma pelo
-    // Last-Event-ID. Nao mexer.
     if(!emCurso&&fonte){fonte.close();fonte=null;}
   };
 }
 
 function rodar(){
   var q=caixa.value.trim();
-  if(!q||emCurso) return;
+  if(emCurso) return;
+  if(!q){caixa.focus(); return;}
   var e=estado(); e.pergunta=q;
   var ativos=Object.keys(e.provedores).filter(function(n){return e.provedores[n].ativo;});
-  if(!ativos.length){bloco('log aviso','nenhum provedor ligado — ligue ao menos um abaixo.');return;}
+  if(!ativos.length){bloco('log aviso','Nenhum canal ligado. Acenda ao menos uma lâmpada em Canais.');return;}
   saida.innerHTML=''; leva=null; visto=0; prontos=0; esperados=ativos.length;
   barra.firstElementChild.style.width='0';
-  emCurso=true; btrodar.disabled=true; btrodar.textContent='rodando…';
-  btparar.hidden=false; btlimpar.hidden=true; caixa.disabled=true;
-  andamento.classList.add('v'); relogio_liga();
+  em_andamento(); relogio_liga();
   fetch('/rodar',{method:'POST',body:JSON.stringify(e)})
     .then(function(r){ if(!r.ok) throw new Error(r.status===409
-        ? 'ja ha um lote em andamento' : 'o painel recusou o pedido ('+r.status+')');
+        ? 'Já há um lote em andamento. Espere terminar ou pare o atual.'
+        : 'O painel recusou o pedido (HTTP '+r.status+').');
       return r.json();})
     .then(function(){escuta();})
     .catch(function(err){bloco('log aviso',String(err.message||err)); termina();});
 }
 
 function parar(){
-  btparar.disabled=true; btparar.textContent='parando…';
+  btparar.disabled=true; btparar.textContent='Parando…';
   fetch('/parar',{method:'POST'}).finally(function(){
     btparar.disabled=false; btparar.textContent='Parar';});
 }
 
+// "So gratis": o servidor pinga cada gratis agora e devolve a mesa montada
+// (so os que responderam, modo arquiteto, juiz = o gratis de maior nota).
+// Aplica na tela sem salvar -- Enviar ja usa o que esta na tela.
+function so_gratis(){
+  if(emCurso) return;
+  btgratis.disabled=true; btgratis.textContent='Testando os grátis…';
+  fetch('/gratis',{method:'POST'}).then(function(r){
+      if(!r.ok) throw new Error(r.status===409?'Há um lote em andamento.':'HTTP '+r.status);
+      return r.json();})
+    .then(function(cfg){
+      Array.prototype.forEach.call(linhas(),function(d){
+        var n=d.dataset.n, c=cfg.provedores[n]; if(!c) return;
+        var at=d.querySelector('.at'); at.checked=c.ativo; d.classList.toggle('off',!c.ativo);
+        if(c.ativo){
+          var sel=d.querySelector('.mod');
+          if(![].some.call(sel.options,function(o){return o.value===c.modelo;})){
+            var o=document.createElement('option'); o.value=o.textContent=c.modelo;
+            sel.insertBefore(o,sel.firstChild);}
+          sel.value=c.modelo;
+          var r=d.querySelector('input[name=e_'+n+'][value='+c.effort+']'); if(r) r.checked=true;
+          sel.onchange();}});
+      modo.value=cfg.modo; juiz.value=cfg.juiz; pinta_modo();
+      soligados.checked=true; filtra(); resumo(); sujou();
+      var ok=cfg.relato.filter(function(x){return x.ok;}), nao=cfg.relato.filter(function(x){return !x.ok;});
+      var lig=Object.keys(cfg.provedores).filter(function(n){return cfg.provedores[n].ativo;}).length;
+      var aviso=document.createElement('div'); aviso.className='log'; saida.appendChild(aviso);
+      aviso.textContent=(ok.length+' modelos grátis responderam; '+lig+' foram ligados (versão antiga da mesma família fica de fora). Juiz: '+cfg.juiz+'.'
+        +(nao.length?'\nNão responderam: '+nao.map(function(x){return x.modelo;}).join(', ')+'.':'')
+        +'\nModo arquiteto: cada etapa vai para o grátis mais apto; se faltar grátis, o mesmo faz mais de uma.'); btlimpar.hidden=false;
+    })
+    .catch(function(err){bloco('log aviso','Não deu para testar os grátis: '+(err.message||err));})
+    .finally(function(){btgratis.disabled=false; btgratis.textContent='Só grátis';});
+}
+
 function limpar(){saida.innerHTML=''; leva=null; btlimpar.hidden=true;}
 
-reata();
 caixa.addEventListener('keydown',function(ev){
   if((ev.ctrlKey||ev.metaKey)&&ev.key==='Enter'){ev.preventDefault();rodar();}});
-
 document.addEventListener('keydown',function(ev){
   if((ev.ctrlKey||ev.metaKey)&&ev.key==='s'){ev.preventDefault();
     if(!btsalvar.disabled) salvar();}});
-pinta_modo(); resumo(); sujou();
+pinta_modo(); filtra(); resumo(); sujou();
+reata();
 </script>

@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """Varre os modelos que cada provedor oferece HOJE e cacheia em ~/.claude/modelos.json.
 
-  python tools/modelos.py           # atualiza o cache e imprime o resumo
-  python tools/modelos.py --mostra  # so le o cache
+  python ~/.claude/tools/modelos.py           # atualiza o cache e imprime o resumo
+  python ~/.claude/tools/modelos.py --mostra  # so le o cache
 
 Lista escrita a mao envelhece calada: o wrapper continua mandando um nome que o
 provedor ja aposentou e o erro so aparece na hora da pergunta. Cada provedor
@@ -12,36 +12,35 @@ varredura mora aqui e o painel so le o cache.
 import json, os, re, subprocess, sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from urllib.request import Request, urlopen
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from llm import PROVEDORES, chave, bin_de  # noqa: E402
+from llm import PROVEDORES, bin_de  # noqa: E402
 
 CACHE = os.path.join(os.path.expanduser("~"), ".claude", "modelos.json")
 
 # O codex nao tem "list models": a conta aceita ou recusa o nome na chamada.
 # Esta lista veio de teste a mao (ver docs/PROVEDORES_LLM.md) e so muda a mao.
 # O gpt-6-astra entrou em 16/09/2026, quando o usuario liberou o modelo caro.
-CODEX_CONHECIDOS = ["gpt-6-astra", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna",
-                    "gpt-5.6-pro", "gpt-5.x-codex", "gpt-5.4-mini"]
+# Sol e Luna entraram em 22/09/2026, apos verificacao no catalogo oficial.
+# gpt-5.6-sol saiu em 23/09/2026: gpt-6-sol custa metade dos creditos.
+# 29/09/2026: gpt-6.1-sol entrou (testado, exige codex-cli >= 0.159); astra e
+# fable sairam dos menus por ordem do usuario.
+# gpt-5.6-pro, gpt-5.x-codex e gpt-5.4-mini sairam no mesmo dia: 400 na conta.
+CODEX_CONHECIDOS = ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna",
+                    "gpt-5.6-terra", "gpt-5.6-luna"]
 
 # O claude tambem nao lista modelos: sao os apelidos que o --model aceita
 # (ver `claude --help`). Mesma situacao do codex — lista a mao, muda a mao.
-CLAUDE_CONHECIDOS = ["sonnet", "opus", "fable"]
+# So o nome completo: o apelido ("opus") nao casa com nota nem com a rota do
+# arquiteto, e duplicava cada modelo no menu (20/11/2026).
+CLAUDE_CONHECIDOS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
 
-# Nomes que a API aceita mas NAO devolve no /models. `deepseek-chat` e alias
-# legado: testado em 11/09/2026, responde normalmente, e continua sendo o
-# padrao do wrapper. Some da lista viva sem sumir do servico.
-ALIAS = {"deepseek": ["deepseek-chat"]}
-
-
-def _json_get(url, k=None):
-    h = {"Authorization": "Bearer " + k} if k else {}
-    return json.load(urlopen(Request(url, headers=h), timeout=40))
-
-
-def _ids(url, k=None):
-    return sorted(m["id"] for m in _json_get(url, k)["data"])
+# ALIAS existia para "deepseek-chat" (id da API oficial que nao aparecia no
+# /models dela, mas respondia). Saiu em 19/09/2026 junto com a API crua: o
+# deepseek agora e o namespace deepseek/ do opencode, e la "deepseek-chat" nao
+# existe -- so os 4 ids curados por ele (ver FONTES). Injetar um alias de fora
+# desse catalogo quebraria a chamada, entao nao ha mais ALIAS nenhum.
+ALIAS = {}
 
 
 def _cli(args, regex):
@@ -54,20 +53,59 @@ def _cli(args, regex):
     return sorted({m.group(1) for m in re.finditer(regex, saida, re.M)})
 
 
+def _linhas_cli(args):
+    """Como `_cli`, mas devolve as linhas cruas sem regex -- o namespace do
+    opencode para openrouter tem MAIS de uma barra (`openrouter/z-ai/glm-...`),
+    e o regex de `_cli` (`[\\w.\\-]+/[\\w.\\-]+` sem barra no meio) foi desenhado
+    para o caso de uma barra so e simplesmente nao bate nesses ids."""
+    p = subprocess.run(args, capture_output=True, text=True, timeout=180,
+                       encoding="utf-8", errors="replace",
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    saida = (p.stdout or "") + (p.stderr or "")
+    return [l.strip() for l in saida.splitlines()]
+
+
+def _namespace_opencode(prefixo, com_prefixo=True):
+    """Modelos de UM namespace do gateway do opencode (`opencode models`),
+    filtrados pelo prefixo (ex.: "openrouter/", "alibaba-token-plan/").
+
+    `com_prefixo=False` devolve o id NU (sem o namespace) -- para reaproveitar
+    filtros que ja trabalham com o id puro do provedor de origem (FORA,
+    FORA_NEMOTRON, so_flash_de_ponta), que foram escritos quando a fonte ainda
+    era a API direta desses provedores.
+    """
+    linhas = [l for l in _linhas_cli([bin_de("opencode"), "models"])
+             if l.startswith(prefixo)]
+    if com_prefixo:
+        return sorted(set(linhas))
+    return sorted({l[len(prefixo):] for l in linhas})
+
+
+# deepseek, openrouter e alibaba pararam de ler a API de cada um direto em
+# 19/09/2026: os tres viraram chamada via_opencode (ver llm.py), e o menu
+# precisa mostrar so o que o NAMESPACE DO OPENCODE realmente aceita -- que nao
+# e o mesmo catalogo da API oficial (o deepseek/ do opencode, por exemplo, tem
+# 4 ids curados, nao os "deepseek-chat"/"deepseek-reasoner" da api.deepseek.com
+# direta). Fonte de verdade agora e sempre `opencode models`.
+ALIBABA_NEGADOS = {"glm-5", "glm-5.1", "MiniMax-M2.5", "kimi-k2.5", "kimi-k2.6",
+                   "kimi-k2.7-code", "deepseek-v3.2", "deepseek-v4-flash",
+                   "qwen3.6-plus"}
+
 FONTES = {
-    # Busca pelo rotulo, como no llm.py: o sk- generico do deepseek colide com
-    # o de outros provedores no APIs.txt, e o regex pegava a chave errada.
-    "deepseek":    lambda: _ids("https://api.deepseek.com/models",
-                                chave(r"(?<=DEEPSEEK_API_KEY=)\S+")),
-    "openrouter":  lambda: _ids("https://openrouter.ai/api/v1/models"),
-    "alibaba":     lambda: _ids("https://token-plan.ap-southeast-1.maas."
-                                "aliyuncs.com/compatible-mode/v1/models",
-                                chave(r"sk-sp-\S+")),
+    "deepseek":    lambda: _namespace_opencode("deepseek/"),
+    "openrouter":  lambda: _namespace_opencode("openrouter/", com_prefixo=False),
+    # Token Plan mistura imagem/video (qwen-image, wan, happyhorse) no mesmo
+    # namespace; o esquadrao so conversa, entao o menu fica so com texto.
+    # ALIBABA_NEGADOS: listados pelo opencode, mas "Access to model denied"
+    # na assinatura (testados um a um em 24/09/2026).
+    "alibaba":     lambda: [m for m in _namespace_opencode("alibaba-token-plan/")
+                            if not re.search(r"/(qwen-image|wan|happyhorse)", m)
+                            and m.split("/", 1)[1] not in ALIBABA_NEGADOS],
     # agy lista "nome<TAB>descricao"; o effort ja vem embutido no nome.
     "agy":         lambda: _cli([bin_de("agy"), "models"], r"^([\w.\-/]+)\t"),
     # commandcode lista "nome  descricao" com dois espacos separando.
     "commandcode": lambda: _cli([bin_de("commandcode"), "--list-models"],
-                                r"^([\w.\-]+/[\w.\-]+)\s{2,}"),
+                                r"^([\w.\-]+/[\w.\-:]+)\s{2,}"),
     "opencode":    lambda: _cli([bin_de("opencode"), "models"],
                                 r"^([\w.\-]+/[\w.\-]+)\s*$"),
     "codex":       lambda: list(CODEX_CONHECIDOS),
@@ -85,29 +123,57 @@ def _versao(mid):
 
 # Modelos que entram no menu mesmo sem ser "flash": pedidos a mao porque o
 # esquadrao os quer disponiveis em todo provedor que os sirva.
-SEMPRE = re.compile(r"(^|/)(minimax-m3|hy3|mimo-v2\.5|mimo-v2\.5-pro)$")
+# 10/10/2026: o menu do openrouter so mostrava flash/free e escondia os carros-chefe
+# novos (kimi-k3, glm-5.3, qwen3.8-max-prime, grok-4.7, claude 5.5...).
+SEMPRE = re.compile(r"(^|/)(minimax-m3|hy3|hy4-preview|mimo-v2\.5|mimo-v2\.5-pro|mimo-v2\.6-pro"
+                    r"|mimo-v2\.6-pro-ultraspeed|kimi-k3|glm-5\.3|glm-5\.3-prime|qwen3\.8-max-prime"
+                    r"|deepseek-v4-pro-0813|grok-4\.7|claude-opus-5\.5|claude-sonnet-5\.5)$")
 
 # Pedidos a mao para FORA do menu do openrouter: aparecem no /models mas a
 # chamada direta do wrapper nunca passa. O inkling:free saiu em 13/09/2026 com
 # 403 restrito a harnesses agenticos registrados — nem com headers passa.
-FORA = {"inclusionai/ling-3.0-flash", "inclusionai/ling-3.0-flash-fin",
-        "rekaai/reka-flash-3", "stepfun/step-3.7-flash",
-        "thinkingmachines/inkling:free"}
+# Da familia nemotron ficam so o ultra-550b e o super-120b (pedido 19/09/2026):
+# os outros sao nano/lightning/content-safety, nicho ou fracos demais para
+# ocuparem linha no menu.
+# 27/09/2026: pedido "todos os free no esquadrao" -- saiu tudo que responde.
+# Ficam fora so os que falham na chamada: content-safety nao aceita tool use
+# (o agente do opencode sempre manda o schema).
+FORA_NEMOTRON = {"nvidia/nemotron-3.5-content-safety:free",
+                 "nvidia/nemotron-3-super-120b-a12b:free",
+                 "nvidia/nemotron-3.5-lightning:free",
+                 "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"}
+# 27/09/2026: reprovados no benchmark (erro de conta, indice baixo ou >80s).
+REPROVADOS = {"thinkingmachines/inkling:free", "thinkingmachines/inkling-small:free",
+              "liquid/lfm-2.5-2.6b:free", "cohere/north-mini-code:free",
+              "openrouter/free", "qwen/qwen3.8-27b:free", "poolside/laguna-s-2.1:free",
+              # ling: fica so o flash-fin:free (melhor indice e gratis)
+              "inclusionai/ling-3.0-flash-fin", "inclusionai/ling-3.0-flash-sante:free",
+              "inclusionai/ling-3.0-flash-vl",
+              "google/gemma-4-31b-it:free", "google/gemma-4-26b-a4b-it:free"}
+
+FORA = FORA_NEMOTRON | REPROVADOS | {"inclusionai/ling-3.0-flash",
+        "rekaai/reka-flash-3", "stepfun/step-3.7-flash"}
 
 # Fora do menu do opencode: versao antiga que so ocupa espaco.
-FORA_OC = {"opencode/muse-spark-1.2-contributor-free"}
+FORA_OC = {"opencode/muse-spark-1.2-contributor-free",
+           "opencode/nemotron-3.5-lightning-free"}
 
-# GO curado que nao tem "flash" no nome e cairia no filtro — confirmado via
-# `opencode models` que existem no catalogo GO (16/09/2026).
-PEDIDOS_OC_GO = {"opencode-go/mimo-v2.5-pro", "opencode-go/deepseek-v4-pro",
-                 "opencode-go/grok-4.6", "opencode-go/kimi-k3",
-                 "opencode-go/mimo-v2.5", "opencode-go/hy3"}
+# Pedidos a mao para DENTRO do menu do opencode: nao tem "flash" no nome e
+# cairiam no filtro. O mimo-v2.5-pro foi pedido junto (19/09/2026) mas nao
+# existe no ZEN — so o GO tinha, e o GO saiu; no ZEN sobra o mimo-v2.5-free.
+# O "muse-spark-1.3-contributor" pago nao existe com esse nome no ZEN: a versao
+# nao-free se chama so "muse-spark-1.3" (o sufixo -contributor so aparece no
+# free). E essa que entra (19/09/2026).
+PEDIDOS_OC = {"opencode/deepseek-v4-pro", "opencode/muse-spark-1.3"}
+
+# O namespace opencode-go/ (assinatura GO) saiu em 19/09/2026: o plano venceu e
+# nao sera renovado. Fica so o ZEN (opencode/), pay-as-you-go.
 
 # O opencode e um gateway: `opencode models` lista tambem os modelos das OUTRAS
 # contas do usuario (alibaba-token-plan/, deepseek/, google/, openrouter/...),
 # que ja entram no esquadrao pelo provedor proprio. No menu do opencode ficam so
 # os namespaces dele.
-NAMESPACES = {"opencode": ("opencode/", "opencode-go/")}
+NAMESPACES = {"opencode": ("opencode/",)}
 
 
 def so_flash_de_ponta(ids):
@@ -131,35 +197,18 @@ def so_flash_de_ponta(ids):
     return sorted(set(familias.values()) | set(spark) | set(extras))
 
 
-# O opencode-go e um catalogo pequeno e curado (o plano que o usuario assina):
-# ali cabem todas as variantes flash, inclusive as que a poda de versao comeria
-# (o v4-flash convive com o v4.1-flash). Ja o namespace opencode/ repete meia
-# duzia de geracoes do gemini, entao esse passa pela poda normal.
-def _flash_vivos(ids):
-    return [m for m in ids if "flash" in m and not m.startswith("~")
-            and not re.search(r":batch|:free|-lite|-image|-preview"
-                              r"|-\d{4}$|-\d{2}-\d{2}$|-free$", m)]
-
-
 def so_do_opencode(ids):
-    """GO curado inteiro + os `-free` do namespace opencode/.
+    """So o namespace ZEN (opencode/): o catalogo pay-as-you-go.
 
-    Leitura dos namespaces (12/09/2026): opencode-go/ = assinatura GO;
-    opencode/ = catalogo ZEN pay-as-you-go, que e onde moram os `-free`. Os
-    free valem DENTRO do cliente oficial do OpenCode, e e exatamente esse
-    cliente que o wrapper chama por CLI local — entao entram no menu (decisao
-    revista em 16/09/2026, a pedido do usuario).
+    O opencode e um gateway e lista tambem modelos das outras contas do usuario
+    (google/, deepseek/, openrouter/...), que ja entram pelo provedor proprio.
+    Os `-free` valem DENTRO do cliente oficial do OpenCode, e e esse cliente que
+    o wrapper chama por CLI local — entao entram no menu.
     """
     ids = [m for m in ids if m.startswith(NAMESPACES["opencode"])]
-    go = [m for m in ids if m.startswith("opencode-go/")]
-    livres = [m for m in ids if m.startswith("opencode/") and m.endswith("-free")
-              and m not in FORA_OC]
-    podados = so_flash_de_ponta([m for m in ids if m.startswith("opencode/")])
-    return sorted(set(_flash_vivos(go))
-                  | {m for m in go if SEMPRE.search(m)
-                     or m.endswith("muse-spark-1.3-contributor")}
-                  | {m for m in go if m in PEDIDOS_OC_GO}
-                  | set(livres) | set(podados))
+    livres = [m for m in ids if m.endswith("-free") and m not in FORA_OC]
+    return sorted(set(livres) | set(so_flash_de_ponta(ids))
+                  | {m for m in ids if m in PEDIDOS_OC})
 
 
 def agy_sem_effort(ids):
@@ -168,11 +217,63 @@ def agy_sem_effort(ids):
     adivinhar o que e nome e o que e esforco. Guarda so o nome-base."""
     # So a familia gemini: e a unica em que o llm.py normaliza o nome. O
     # gpt-oss-120b-medium, por exemplo, precisa do nome inteiro.
-    return sorted({re.sub(r"-(low|medium|high)$", "", m)
+    return sorted({re.sub(r"-(low|medium|high|xhigh)$", "", m)
                    if m.startswith("gemini-") else m for m in ids})
 
 
-FILTRO = {"openrouter": so_flash_de_ponta, "opencode": so_do_opencode,
+def so_flash_e_free(ids):
+    """Topo de cada familia flash MAIS todo modelo gratuito do catalogo.
+
+    O free nao compete por qualidade, compete por custo zero: cabe no menu
+    inteiro, sem poda de versao. O FORA continua valendo — la moram os que a
+    API lista mas recusa a chamada (403 de harness registrado), free ou nao.
+    """
+    livres = [m for m in ids
+              if (m.endswith(":free") or m.endswith("-free")) and m not in FORA]
+    return sorted(set(so_flash_de_ponta(ids)) | set(livres))
+
+
+def commandcode_sem_spark_velho(ids):
+    """Menu do commandcode inteiro, menos a prateleira de muse-spark.
+
+    O commandcode serve cinco variantes (1.1, 1.2, 1.2-contributor, 1.3,
+    1.3-contributor) que so diferem em geracao e cota. Fica a de cima
+    (pedido 19/09/2026); as outras so ocupavam linha.
+    """
+    return sorted(m for m in ids
+                  if "muse-spark" not in m
+                  or m.endswith("muse-spark-1.3-contributor"))
+
+
+def openrouter_com_prefixo(ids):
+    """so_flash_e_free trabalha com o id NU (e e onde FORA/FORA_NEMOTRON
+    continuam validos, sem reescrever os dois conjuntos com o namespace na
+    frente); o prefixo "openrouter/" volta so no final, para bater com o que
+    via_opencode espera ao chamar (ver PROVEDORES em llm.py)."""
+    return sorted("openrouter/" + m for m in so_flash_e_free(ids))
+
+
+# 29/09/2026, pedido "LLM que nao responde mais pode retirar": pingados com uma
+# palavra, todos os menus. Fora quem falhou por motivo que nao passa sozinho
+# (403 fora do plano, rota inexistente, filtro de provedor quebrado, acesso
+# desabilitado, conta ZEN sem saldo, erro de servidor duas vezes seguidas).
+# Falha so por "effort low nao suportado" NAO entrou: o modelo responde.
+# Se colocar saldo no ZEN, tire os opencode/ pagos daqui.
+MORTOS = {
+    "google/gemini-3.1-flash-lite", "google/gemini-3.5-flash",
+    "google/gemini-3.5-flash-lite", "google/gemini-3.6-flash",
+    "minimaxai/minimax-m2.7", "thinkingmachines/inkling",
+    "thinkingmachines/inkling-small", "typesafe/jev", "xai/grok-4.6",
+    "moonshotai/kimi-k2.6", "moonshotai/kimi-k2.7-code-highspeed",
+    "opencode/ling-3.0-flash-fin-free", "opencode/gemini-3.8-flash",
+    "opencode/muse-spark-1.3", "opencode/deepseek-v4-flash-vision-exp",
+    "opencode/deepseek-v4-pro", "opencode/deepseek-v4.1-flash",
+    "opencode/glm-5.3-flash", "opencode/minimax-m3", "opencode/qwen3.8-flash",
+}
+
+
+FILTRO = {"openrouter": openrouter_com_prefixo,
+          "commandcode": commandcode_sem_spark_velho, "opencode": so_do_opencode,
           "agy": agy_sem_effort}
 
 
@@ -181,6 +282,7 @@ def varre(nome):
         ms = FONTES[nome]()
         if nome in FILTRO:
             ms = FILTRO[nome](ms)
+        ms = [m for m in ms if m not in MORTOS]
         return nome, {"modelos": ms, "erro": None}
     except BaseException as e:
         return nome, {"modelos": [], "erro": f"{type(e).__name__}: {e}"[:200]}
@@ -203,6 +305,13 @@ def atualiza():
     saida = {"provedores": res,
              "padroes": {n: PROVEDORES[n][1] for n in PROVEDORES},
              "atualizado_em": datetime.now().isoformat(timespec="seconds")}
+    # O commandcode marca o free so na descricao (o stealth/ nao tem "free" no
+    # nome); o painel usa isto para por "free" na frente no menu.
+    try:
+        saida["gratis"] = _cli([bin_de("commandcode"), "--list-models"],
+                               r"^(\S+)\s+FREE ")
+    except Exception:
+        saida["gratis"] = antigo.get("gratis", [])
     with open(CACHE, "w", encoding="utf-8") as f:
         json.dump(saida, f, ensure_ascii=False, indent=2)
     return saida

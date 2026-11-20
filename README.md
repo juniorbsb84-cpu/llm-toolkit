@@ -3,16 +3,20 @@
 Uma pergunta, qualquer provedor, de qualquer projeto — e, quando a pergunta é
 difícil, vários modelos ao mesmo tempo.
 
-Seis scripts Python sem dependência externa (só a biblioteca padrão),
-construídos um em cima do outro:
+Scripts Python sem dependência externa (só a biblioteca padrão), construídos
+um em cima do outro:
 
 ```
 llm.py            uma pergunta -> um provedor
   esquadrao.py      a mesma pergunta -> N provedores em paralelo
   equipe.py         um plano com dependências -> cada tarefa no seu provedor
+  registro.py       cada lote vira um registro JSONL; relatório de falhas
+  capacidades.py    ranking por especialidade (Artificial Analysis + LMArena)
+  tabela_llm.py     tabela de notas e custo por modelo e effort
   modelos.py        varre que modelos cada provedor oferece hoje
   painel.py         escolhe e dispara o lote pelo navegador
   inicia_painel.py  sobe o painel sem console, ou só abre o navegador
+valida_esquadrao.py checagem de ponta a ponta; test_*.py são os testes
 ```
 
 ## Por que existe
@@ -39,10 +43,15 @@ cd llm-toolkit
 python tools/llm.py codex "teste"
 ```
 
-### Chaves
+### Contas e chaves
 
-Os provedores por HTTP (`openrouter`, `alibaba`, `deepseek`) leem a chave de um
-arquivo de texto **fora do repositório**:
+Todos os provedores são chamados pelo CLI oficial, com a sessão já logada na
+máquina: `agy`, `codex`, `claude` e `commandcode` pelos próprios CLIs;
+`opencode`, `openrouter`, `alibaba` e `deepseek` pelo agente do `opencode`,
+que guarda as credenciais dele. Nenhum script lê chave hoje.
+
+O `llm.py` ainda conhece o arquivo de chaves dos tempos de HTTP direto, para
+quem quiser voltar a usá-lo. Ele mora **fora do repositório**:
 
 ```bash
 cp exemplos/llm-apis.txt.example ~/.llm-apis.txt
@@ -53,8 +62,6 @@ Outro caminho? Aponte a variável `LLM_APIS`. A chave nunca é impressa, nem em
 mensagem de erro. O `.gitignore` bloqueia `.llm-apis.txt`, `APIs.txt`, `.env` e
 `*.key` — mas o arquivo certo mora **fora** da árvore do repositório.
 
-Os provedores por CLI (`agy`, `codex`, `claude`, `opencode`, `commandcode`)
-usam a sessão já logada na máquina — não precisam de chave nenhuma aqui.
 
 ## Uso
 
@@ -83,6 +90,30 @@ Quatro modos:
 | `arquiteto` | o juiz quebra o objetivo em 2–6 subtarefas e roteia por especialidade |
 | `consenso` | laço até todos ratificarem a mesma síntese, não um número fixo de rodadas |
 
+No `arquiteto`, cada subtarefa vai para o canal ligado com a melhor nota na
+especialidade dela (código, raciocínio, dados, pesquisa, geral, frontend,
+texto, visão). As notas vêm de `capacidades.py`:
+
+```bash
+python tools/capacidades.py   # baixa a Artificial Analysis e gera o ranking
+```
+
+Cada especialidade é ordenada pela prova que mede aquela tarefa, por modelo e
+por effort: Terminal-Bench e FrontierCode em código, HLE em raciocínio,
+GDP-PDF em dados, AA-Omniscience em pesquisa, Intelligence Index no geral. O
+que depende de gosto (frontend, texto, visão) usa o Elo do LMArena, que não
+tem API e fica copiado no script com data.
+
+### Registro e saúde
+
+```bash
+python tools/esquadrao.py relatorio --dias 7   # falhas por canal e por classe
+python tools/esquadrao.py saude                # uma pergunta curta a cada canal
+```
+
+Cada lote grava um JSONL em `~/.claude/esquadrao/runs/`. A falha é
+classificada (lock, login, limite, cota, modelo, vazio, cortado); só lock e
+limite de taxa são repetidos sozinhos, com espera de 5 e 20 segundos.
 **O valor não está em ter N respostas, está na divergência entre elas.** Onde
 todos concordam não precisa de revisão humana; onde racha é onde o problema é
 difícil de verdade. No modo `consenso`, se o teto de rodadas estourar, o que
@@ -121,7 +152,11 @@ python tools/painel.py          # sobe no terminal atual
 ```
 
 Escolhe provedor, modelo e effort, dispara o lote e acompanha o progresso ao
-vivo (Server-Sent Events na rota `/eventos`). A configuração é gravada em
+vivo (Server-Sent Events na rota `/eventos`). Cada canal mostra a nota e o
+custo por tarefa do modelo e effort escolhidos; o effort só fica ativo onde o
+provedor de fato o recebe. Acima dos canais, a **rota do arquiteto** mostra
+quem assume cada especialidade com os canais ligados naquele momento,
+calculada pelo mesmo código do modo `arquiteto`. A configuração é gravada em
 `~/.claude/esquadrao.json`, que `esquadrao.py` e `equipe.py` leem depois.
 
 O servidor escuta **só em `127.0.0.1`** e as rotas são uma lista fechada — não
@@ -148,6 +183,8 @@ varredura mora aqui e o painel só lê o cache.
 | `~/.claude/esquadrao.json` | `painel.py` | `esquadrao.py`, `equipe.py` |
 | `~/.claude/perfis.json` | você, à mão | `esquadrao.py` (modo arquiteto) |
 | `~/.claude/modelos.json` | `modelos.py` | `painel.py` |
+| `~/.claude/esquadrao/capacidades.json` | `capacidades.py` | `esquadrao.py`, `painel.py` |
+| `~/.claude/esquadrao/runs/` | `registro.py` | `esquadrao.py relatorio` |
 
 Exemplos comentados em [`exemplos/`](exemplos/). Nenhum é obrigatório: sem eles
 valem os padrões embutidos no código.
@@ -174,6 +211,13 @@ Decisões que parecem estranhas e não são:
 - **`opencode` fora do lote padrão** — a conta foi bloqueada por usar o modelo
   gratuito fora da plataforma deles. É limite de termo de uso, não de volume,
   então rodar menos não resolve. Entra só se pedido à mão, e sob risco conhecido.
+
+## Testes
+
+```bash
+python tools/valida_esquadrao.py          # sem gastar token
+python tools/valida_esquadrao.py --vivo   # + uma pergunta curta por canal
+```
 
 ## Licença
 
