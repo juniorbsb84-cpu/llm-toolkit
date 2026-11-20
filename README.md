@@ -181,7 +181,7 @@ varredura mora aqui e o painel só lê o cache.
 |---|---|---|
 | `~/.llm-apis.txt` (ou `$LLM_APIS`) | você | `llm.py` |
 | `~/.claude/esquadrao.json` | `painel.py` | `esquadrao.py`, `equipe.py` |
-| `~/.claude/perfis.json` | você, à mão | `esquadrao.py` (modo arquiteto) |
+| `~/.claude/perfis.json` | você, à mão (opcional) | `esquadrao.py` e `painel.py`: substitui o ranking só nas especialidades listadas |
 | `~/.claude/modelos.json` | `modelos.py` | `painel.py` |
 | `~/.claude/esquadrao/capacidades.json` | `capacidades.py` | `esquadrao.py`, `painel.py` |
 | `~/.claude/esquadrao/runs/` | `registro.py` | `esquadrao.py relatorio` |

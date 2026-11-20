@@ -132,11 +132,20 @@ def rota_previa(provs, cap=None):
             return {}
     ativos = {n: (c.get("modelo") or "", c.get("effort") or "low")
               for n, c in provs.items() if c.get("ativo")}
+    # perfis.json, quando existe, substitui o ranking na especialidade, como
+    # no rota_final do esquadrao.py.
+    try:
+        perfis = json.load(open(esq.PERFIS, encoding="utf-8")).get("rota", {})
+    except Exception:
+        perfis = {}
     out = {}
     for e, padroes in cap.get("ranking", {}).items():
         notas = cap.get("notas", {}).get(e, [])
         pos = {n: esq._posicao(padroes, *ativos[n]) for n in ativos}
-        ordem = sorted(ativos, key=lambda n: pos[n])[:3]
+        if isinstance(perfis.get(e), list) and perfis[e]:
+            ordem = [n for n in perfis[e] if n in ativos][:3]
+        else:
+            ordem = sorted(ativos, key=lambda n: pos[n])[:3]
         out[e] = [[n, notas[pos[n]][1] if pos[n] < len(notas) else None] for n in ordem]
     return out
 

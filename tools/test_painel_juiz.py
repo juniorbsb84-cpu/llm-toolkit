@@ -22,6 +22,16 @@ provs = {"claude": {"ativo": True, "modelo": "claude-opus-5-5", "effort": "mediu
          "agy4": {"ativo": True, "modelo": "gemini-4-neon", "effort": "high"},
          "agy2": {"ativo": False, "modelo": "gemini-4-neon", "effort": "xhigh"},
          "x": {"ativo": True, "modelo": "nada-medido", "effort": "low"}}
+painel.esq.PERFIS = os.path.join(tempfile.gettempdir(), "nao_existe_perfis.json")
 r = painel.rota_previa(provs, cap)
 assert r["codigo"] == [["agy4", 52.4], ["claude", 40.0], ["x", None]], r
 print("ok rota")
+
+# perfis.json substitui o ranking naquela especialidade: a previa tem que seguir
+import json as _j
+pf = os.path.join(tempfile.gettempdir(), "teste_perfis.json")
+_j.dump({"rota": {"codigo": ["agy2", "x", "claude"]}}, open(pf, "w", encoding="utf-8"))
+painel.esq.PERFIS = pf
+r = painel.rota_previa(provs, cap)
+assert r["codigo"] == [["x", None], ["claude", 40.0]], r   # agy2 desligado fica fora
+print("ok perfis")
